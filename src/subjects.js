@@ -21,6 +21,13 @@ export const SUBJECTS = [
   'Radiology',
 ];
 
+// Rough share of the 200 NEET PG questions per subject (an estimate from recent papers; it shifts year to year).
+export const EXAM_WEIGHT = {
+  Anatomy: 13, Physiology: 11, Biochemistry: 9, Pathology: 14, Pharmacology: 13, Microbiology: 11,
+  'Forensic Medicine': 8, 'Community Medicine': 16, ENT: 8, Ophthalmology: 8, Medicine: 22, Surgery: 20,
+  'Obstetrics & Gynaecology': 18, Paediatrics: 8, Orthopaedics: 5, Dermatology: 4, Psychiatry: 4, Anaesthesia: 4, Radiology: 4,
+};
+
 const ALIASES = {
   anat: 'Anatomy',
   physio: 'Physiology',

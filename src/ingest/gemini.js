@@ -6,7 +6,7 @@ import { SCHEMA, SYSTEM, EXPLAIN_SYSTEM, extractInstructions, notesContext } fro
 export const geminiAvailable = () => Boolean(config.gemini.apiKey);
 
 // Gemini's responseSchema is an OpenAPI subset: upper-case types, no additionalProperties.
-function toGeminiSchema(s) {
+export function toGeminiSchema(s) {
   if (Array.isArray(s)) return s.map(toGeminiSchema);
   if (!s || typeof s !== 'object') return s;
   const out = {};
@@ -22,11 +22,12 @@ const GEMINI_SCHEMA = toGeminiSchema(SCHEMA);
 function toParts(blocks) {
   return blocks.map((b) => {
     if (b.type === 'text') return { text: b.text };
+    if (b.type === 'url') return { file_data: { file_uri: b.url } };
     return { inline_data: { mime_type: b.source.media_type, data: b.source.data } };
   });
 }
 
-async function generate({ system, parts, json, maxTokens }) {
+export async function generate({ system, parts, json, maxTokens, schema = GEMINI_SCHEMA }) {
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${config.gemini.model}:generateContent`;
   const res = await fetch(url, {
     method: 'POST',
@@ -36,7 +37,7 @@ async function generate({ system, parts, json, maxTokens }) {
       contents: [{ role: 'user', parts }],
       generationConfig: {
         maxOutputTokens: maxTokens,
-        ...(json ? { responseMimeType: 'application/json', responseSchema: GEMINI_SCHEMA } : {}),
+        ...(json ? { responseMimeType: 'application/json', responseSchema: schema } : {}),
       },
     }),
   });
@@ -50,6 +51,8 @@ async function generate({ system, parts, json, maxTokens }) {
   }
   return (cand.content?.parts || []).map((p) => p.text || '').join('');
 }
+
+export { toParts };
 
 export async function extractWithGemini(contentBlocks, { hint = '', existingTopics = {} } = {}) {
   const text = await generate({

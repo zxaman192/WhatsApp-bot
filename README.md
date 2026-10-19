@@ -12,16 +12,23 @@ It works on WhatsApp and Telegram. Both use the same database, so a PDF you uplo
 | `q` / `q pharma` | One question now, as a tappable A–D list. |
 | `test` | Pick a subject and length from menus. |
 | `test pharma 20`, `test pyq 2022`, `test 10 thyroid` | A custom test by subject, PYQ year or topic. Ends with a score, per-topic breakdown and the questions to review. |
-| `revise` | A test of the questions you got wrong. |
+| `revise` / `due` | Spaced repetition: a question you get wrong comes back after 1, 3, 7 and 21 days. `revise` tests your review queue; `q` and `test` slip due reviews in too. |
+| `grand` / `grand 50` | A full mock spread across subjects like the real paper: 1.05 minutes per question, +4/−1, skip allowed, answers only at the end, then marks and a subject breakdown. |
+| Photo with caption `spot: <answer>` (or `spot derma: <answer>`) | Saves an image question (X-ray, specimen, lesion, instrument). `spot` quizzes you: A–D options once you have 4+ images, typed answers before that. |
+| A voice note | Transcribed and handled like a typed message, so you can ask questions by voice. Needs Gemini. |
+| A YouTube link, or a lecture recording (over 5 minutes or captioned "lecture") | Turned into notes and MCQs, filed like any upload. Needs Gemini. Recordings up to 14 MB. |
 | `explain <topic>` or any question | An answer built from your notes, citing them `[1]`, `[2]` with file and page. |
 | `where <topic>` | Every note section and question about that topic, by subject › topic, file, page and PYQ year. |
-| `why` | Explains the last question you answered, from your notes. |
-| `bank` / `stats` | What's in your database / your accuracy, weak topics and active days. |
+| `why` / `similar` | Explains the last question from your notes / lists questions like it, with a button to practise them. |
+| `flash` / `flash pharma antiepileptics` | Five flashcards from your notes (AI-written, or fill-in-the-blank without a key), with "knew it / didn't" and a summary. |
+| `hy` / `hy pharma` | High-yield topics: the ones asked in the most PYQ years, with your accuracy on each. |
+| `coach` | Your three weakest topics, each with a 10-question drill. Every Sunday at your daily time you also get a weekly report. |
+| `exam 15-01-2027`, `plan`, `today` | Exam countdown and a day-by-day subject plan. Heavier and weaker subjects get more days; the last 10% are for grand tests and revision. The daily question follows the plan (`D-45 · Today: Pharmacology`). `plan new` rebalances. |
+| `name Harsh`, `buddy`, `buddy add CODE`, `lb` | Study buddies: friends join with your code, get the same daily question, and share a weekly leaderboard with streaks. Each friend must be in `ALLOWED_NUMBERS` / `TELEGRAM_ALLOWED_IDS`. |
+| `bank` / `stats` / `report` | What's in your database / your accuracy, streak, review queue and weak topics / this week against last week. |
 | `daily 07:30`, `daily off`, `daily pharma` | Your question of the day. |
 
 After every answer you get the explanation plus the matching passage from your notes (`📖 Your notes: Pharmacology › Antiepileptics (marrow.pdf p.12)`).
-
-Question picking favours questions you got wrong before (spaced review), then ones you have never seen.
 
 ## How it is built
 
@@ -73,4 +80,4 @@ Leave both keys empty and the bot still works for:
 - text and PDFs with selectable text laid out as numbered MCQs, with the answer marked inline (`Ans: b`) or in an answer key (`1-b 2-c …`). They are sorted into subject and topic by keywords, or by your caption (`pharma`), with page numbers;
 - other text, which is kept as notes page by page, so `explain` (shows the matching passages) and `where` work.
 
-Photos, scanned PDFs, writing questions from notes and written explanations need an AI key. Set `CLAUDE_MODEL` to change the model.
+Photos, scanned PDFs, writing questions from notes, written explanations and AI flashcards need an AI key. Voice notes, lecture recordings and YouTube links need Gemini specifically, since Claude can't listen to audio or watch video. Set `CLAUDE_MODEL` to change the model.

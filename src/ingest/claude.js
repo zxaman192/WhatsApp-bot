@@ -140,3 +140,19 @@ export async function explainFromNotes(question, excerpts) {
   if (msg.stop_reason === 'refusal') throw new Error('Claude declined to answer this.');
   return msg.content.filter((b) => b.type === 'text').map((b) => b.text).join('').trim();
 }
+
+/** Generic structured-output call: returns parsed JSON matching `schema`. */
+export async function claudeJson(system, content, schema, maxTokens = 8000) {
+  const stream = getClient().beta.messages.stream({
+    model: config.anthropic.model,
+    max_tokens: maxTokens,
+    system,
+    ...fallbackParams(),
+    output_config: { effort: 'low', format: { type: 'json_schema', schema } },
+    messages: [{ role: 'user', content }],
+  });
+  const msg = await stream.finalMessage();
+  if (msg.stop_reason === 'refusal') throw new Error('The AI declined this request.');
+  if (msg.stop_reason === 'max_tokens') throw new Error('The answer was too long.');
+  return JSON.parse(msg.content.filter((b) => b.type === 'text').map((b) => b.text).join(''));
+}

@@ -4,7 +4,7 @@ import { SUBJECTS, findSubjectIn } from '../subjects.js';
 import { parseFormattedMcqs } from './textParser.js';
 import { classify } from './keywords.js';
 import { imageBlock, pdfBlock, textBlock } from './claude.js';
-import { aiAvailable, extract } from './ai.js';
+import { aiAvailable, extract, mediaAvailable } from './ai.js';
 
 const PAGES_PER_CHUNK = 15;
 const TEXT_CHUNK_CHARS = 40000;
@@ -58,7 +58,12 @@ function validQuestion(q) {
  */
 export async function ingest({ buffer, mimeType, filename, caption = '', addedBy, onProgress = async () => {} }) {
   const hint = caption || filename || '';
-  const kind = mimeType === 'application/pdf' ? 'pdf' : IMAGE_TYPES.includes(mimeType) ? 'image' : 'text';
+  const kind =
+    mimeType === 'application/pdf' ? 'pdf'
+    : IMAGE_TYPES.includes(mimeType) ? 'image'
+    : /^(audio|video)\//.test(mimeType) ? 'lecture'
+    : mimeType === 'text/uri-list' ? 'link'
+    : 'text';
   const sourceId = await store.addSource(filename || `${kind} upload`, kind, addedBy);
   const summary = { questions: 0, duplicates: 0, notes: 0, bySubject: {}, skipped: 0, errors: [], usedAi: false };
 
@@ -96,6 +101,26 @@ export async function ingest({ buffer, mimeType, filename, caption = '', addedBy
       tally(n.subject, topic, 'notes');
     }
   };
+
+  // Lecture recordings and YouTube links: only Gemini can watch or listen.
+  if (kind === 'lecture' || kind === 'link') {
+    if (!mediaAvailable()) {
+      summary.errors.push('Lectures and YouTube links need a Gemini key (GEMINI_API_KEY).');
+      return summary;
+    }
+    summary.usedAi = true;
+    const block =
+      kind === 'link'
+        ? { type: 'url', url: buffer.toString('utf8').trim() }
+        : { type: 'media', source: { media_type: mimeType.split(';')[0], data: buffer.toString('base64') } };
+    const lectureHint = `This is a recorded lecture, not a document. Treat it as study notes: write the key teaching points as notes per topic and write MCQs from them.${caption ? ` ${caption}` : ''}`;
+    try {
+      await save(await extract([block], { hint: lectureHint, existingTopics: await store.existingTopics() }));
+    } catch (e) {
+      summary.errors.push(e.message);
+    }
+    return summary;
+  }
 
   if (!aiAvailable()) {
     await ingestWithoutAi({ kind, buffer, hint, save, summary });

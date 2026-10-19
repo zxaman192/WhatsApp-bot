@@ -51,11 +51,22 @@ export const sendButtons = (to, body, buttons) =>
 
 export function sendList(to, body, _label, rows) {
   // Short labels (A–D answer buttons) go on one row; longer ones get a row each.
-  const short = rows.every((r) => r.title.length <= 2);
+  const short = rows.every((r) => r.title.length <= 4);
   const keyboard = short
     ? [rows.map((r) => ({ text: r.title, callback_data: r.id }))]
     : rows.map((r) => [{ text: clip(r.description ? `${r.title} · ${r.description}` : r.title, 60), callback_data: r.id }]);
   return send(to, body, keyboard);
+}
+
+export async function sendImage(to, buffer, mimeType, caption = '') {
+  if (config.telegram.dryRun) return sink(to, { type: 'telegram-photo', chat_id: chatId(to), bytes: buffer.length, caption });
+  const form = new FormData();
+  form.append('chat_id', chatId(to));
+  form.append('caption', clip(caption, 1024));
+  form.append('photo', new Blob([buffer], { type: mimeType }), 'image');
+  const res = await fetch(api('sendPhoto'), { method: 'POST', body: form });
+  const data = await res.json().catch(() => ({}));
+  if (!data.ok) throw new Error(`Telegram sendPhoto failed (${res.status}): ${data.description || 'unknown error'}`);
 }
 
 /** Download a file a user sent. Bot API limit: 20 MB. */
@@ -82,8 +93,13 @@ export async function registerWebhook(publicUrl) {
     commands: [
       { command: 'q', description: 'One question now' },
       { command: 'test', description: 'Start a test' },
-      { command: 'revise', description: 'Retry wrong answers' },
-      { command: 'bank', description: "What's in the database" },
+      { command: 'grand', description: 'Full NEET PG mock (200 Q)' },
+      { command: 'revise', description: 'Questions due for review' },
+      { command: 'spot', description: 'Image question' },
+      { command: 'flash', description: 'Flashcards from your notes' },
+      { command: 'coach', description: 'Drill your weakest topics' },
+      { command: 'plan', description: 'Your plan to exam day' },
+      { command: 'highyield', description: 'Most-asked topics in your PYQs' },
       { command: 'stats', description: 'Your progress' },
       { command: 'help', description: 'All commands' },
     ],
@@ -118,6 +134,14 @@ export function toBotMessage(update) {
   if (m.photo?.length) {
     const largest = m.photo[m.photo.length - 1];
     return { ...base, type: 'image', image: { id: largest.file_id, mime_type: 'image/jpeg', caption: m.caption || '' } };
+  }
+  const audio = m.voice || m.audio;
+  if (audio) {
+    return { ...base, type: 'audio', audio: { id: audio.file_id, mime_type: audio.mime_type || 'audio/ogg', duration: audio.duration, caption: m.caption || '' } };
+  }
+  if (m.video_note || m.video) {
+    const v = m.video || m.video_note;
+    return { ...base, type: 'audio', audio: { id: v.file_id, mime_type: v.mime_type || 'video/mp4', duration: v.duration, caption: m.caption || '' } };
   }
   if (m.text) {
     // "/test pharma 20" → "test pharma 20"; also strips "@botname" from group-style commands.

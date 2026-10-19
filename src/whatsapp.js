@@ -79,6 +79,23 @@ export function sendTemplate(to, name, lang) {
   return post({ to, type: 'template', template: { name, language: { code: lang } } });
 }
 
+/** Send an image (uploaded to WhatsApp first). */
+export async function sendImage(to, buffer, mimeType, caption = '') {
+  if (config.dryRun) return sink(to, { to, type: 'image', image: { bytes: buffer.length, mime: mimeType, caption } });
+  const form = new FormData();
+  form.append('messaging_product', 'whatsapp');
+  form.append('type', mimeType);
+  form.append('file', new Blob([buffer], { type: mimeType }), 'image');
+  const up = await fetch(`${graph()}/${config.whatsapp.phoneNumberId}/media`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${config.whatsapp.token}` },
+    body: form,
+  });
+  if (!up.ok) throw new Error(`WhatsApp media upload failed (${up.status}): ${await up.text()}`);
+  const { id } = await up.json();
+  return post({ to, type: 'image', image: { id, caption: clip(caption, 1024) } });
+}
+
 /** Download media a user sent. Returns { buffer, mimeType }. */
 export async function downloadMedia(mediaId) {
   const auth = { Authorization: `Bearer ${config.whatsapp.token}` };
