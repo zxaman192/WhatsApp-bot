@@ -3,6 +3,7 @@ import { createHmac, timingSafeEqual } from 'node:crypto';
 import { config } from './config.js';
 import { initDb } from './db.js';
 import { handleMessage } from './bot.js';
+import { registerWebhook, toBotMessage } from './telegram.js';
 import { startScheduler, runDueDailies } from './scheduler.js';
 
 const app = express();
@@ -45,6 +46,18 @@ app.post('/webhook', (req, res) => {
   }
 });
 
+// Telegram sends every update here.
+app.post('/telegram', (req, res) => {
+  if (!config.telegram.token || req.get('x-telegram-bot-api-secret-token') !== config.telegram.webhookSecret) {
+    return res.sendStatus(401);
+  }
+  res.sendStatus(200);
+  const msg = toBotMessage(req.body || {});
+  if (!msg || seen.has(msg.id)) return;
+  seen.add(msg.id);
+  handleMessage(msg).catch((e) => console.error('handleMessage failed', e));
+});
+
 // Optional: an external cron (e.g. Render cron job) can hit this to make sure dailies go out
 // even if the free instance was asleep. Protected by the verify token.
 app.post('/cron/daily', async (req, res) => {
@@ -63,3 +76,8 @@ startScheduler();
 app.listen(config.port, () => {
   console.log(`NEET PG bot listening on :${config.port} (${config.dryRun ? 'DRY_RUN, not sending' : 'live'})`);
 });
+if (config.telegram.token && config.publicUrl) {
+  registerWebhook(config.publicUrl)
+    .then(() => console.log('Telegram webhook registered.'))
+    .catch((e) => console.error('Telegram webhook registration failed:', e.message));
+}

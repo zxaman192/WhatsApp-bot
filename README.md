@@ -2,6 +2,8 @@
 
 A WhatsApp bot for NEET PG preparation. Send it your notes, question banks and PYQs (PDF, photo or text). It splits them into questions and notes, files each one under its subject and topic, then quizzes you: one question a day, or a full test whenever you ask. Ask it about any topic and it explains from your own notes, with the file and page it came from.
 
+It works on WhatsApp and Telegram. Both use the same database, so a PDF you upload in Telegram is in your WhatsApp tests too, and every command below works in both.
+
 ## What it does
 
 | You send | The bot |
@@ -23,7 +25,7 @@ Question picking favours questions you got wrong before (spaced review), then on
 
 ## How it is built
 
-- **Node.js + Express** webhook for the official **WhatsApp Cloud API** (`src/server.js`, `src/whatsapp.js`).
+- **Node.js + Express** webhooks for the official **WhatsApp Cloud API** and the **Telegram Bot API** (`src/server.js`, `src/whatsapp.js`, `src/telegram.js`). Telegram users are stored as `tg:<id>`; everything else is shared.
 - **Postgres** storage with full-text search (`src/db.js`): **Supabase** in production; an embedded Postgres (PGlite) when `DATABASE_URL` is empty, for local testing.
 - **Claude API** reads PDFs (in 15-page chunks) and photos, extracts and sorts questions, and answers from your notes (`src/ingest/claude.js`). Text that is already laid out as numbered MCQs with an answer key is parsed without AI (`src/ingest/textParser.js`).
 - A one-minute scheduler sends each user's daily question at their chosen time (`src/scheduler.js`). Outside WhatsApp's 24-hour window it sends your approved template instead.
@@ -50,7 +52,8 @@ Tests: `npm test`
 4. **Webhook.** In Meta, WhatsApp → Configuration: callback URL `https://<your-service>.onrender.com/webhook`, verify token = your `WHATSAPP_VERIFY_TOKEN`. Subscribe to the `messages` field.
 5. **Go live.** Set `DRY_RUN=false` on Render. Send "hi" to the bot's number.
 6. **Daily question on Render's free plan.** Free services sleep after 15 minutes without traffic, which pauses the scheduler. Either use a paid instance, or create a free job on cron-job.org that every 10 minutes sends `POST https://<your-service>.onrender.com/cron/daily` with header `x-cron-token: <WHATSAPP_VERIFY_TOKEN>`. That keeps it awake and sends any due questions.
-7. **Daily question template (optional).** WhatsApp only lets a bot message you first within 24 hours of your last message. To get the daily question even on days you haven't messaged, create a Utility template in WhatsApp Manager (e.g. "Your NEET PG question of the day is ready 📚" with a quick-reply button "Start") and set `DAILY_TEMPLATE_NAME` to its name.
+7. **Telegram (optional).** In Telegram, message @BotFather, send `/newbot`, and copy the token it gives you into `TELEGRAM_BOT_TOKEN` on Render. On restart the bot registers its webhook by itself. Message your bot once: it replies with your Telegram ID; put that in `TELEGRAM_ALLOWED_IDS`. Telegram bots can receive files up to 20 MB.
+8. **Daily question template (optional).** WhatsApp only lets a bot message you first within 24 hours of your last message. To get the daily question even on days you haven't messaged, create a Utility template in WhatsApp Manager (e.g. "Your NEET PG question of the day is ready 📚" with a quick-reply button "Start") and set `DAILY_TEMPLATE_NAME` to its name.
 
 ## Costs
 

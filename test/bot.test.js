@@ -10,6 +10,7 @@ config.dailyTemplate.name = 'daily_question';
 
 const store = await import('../src/db.js');
 const { setSink } = await import('../src/whatsapp.js');
+const tg = await import('../src/telegram.js');
 const { handleMessage, parseTestArgs } = await import('../src/bot.js');
 const { runDueDailies } = await import('../src/scheduler.js');
 const { parseFormattedMcqs } = await import('../src/ingest/textParser.js');
@@ -18,6 +19,7 @@ const { findSubjectIn, matchSubject } = await import('../src/subjects.js');
 const ME = '919876543210';
 let out = [];
 setSink((to, p) => out.push(p));
+tg.setSink((to, p) => out.push({ ...p, to }));
 let n = 0;
 const send = (extra) => handleMessage({ from: ME, id: `t${++n}`, ...extra }, { download: async (id) => files[id] });
 const say = (body) => send({ type: 'text', text: { body } });
@@ -187,4 +189,45 @@ test('PDFs are split into 15-page chunks with page offsets', async () => {
   const chunks = [];
   for await (const c of pdfChunks(Buffer.from(await doc.save()))) chunks.push([c.firstPage, c.lastPage, c.total]);
   assert.deepEqual(chunks, [[1, 15, 32], [16, 30, 32], [31, 32, 32]]);
+});
+
+test('telegram updates become bot messages', () => {
+  assert.deepEqual(tg.toBotMessage({ message: { message_id: 5, chat: { id: 42 }, text: '/test@neetbot pharma 10' } }).text, { body: 'test pharma 10' });
+  const doc = tg.toBotMessage({ message: { message_id: 6, chat: { id: 42 }, caption: 'micro', document: { file_id: 'F1', file_name: 'micro.pdf', mime_type: 'application/pdf' } } });
+  assert.equal(doc.from, 'tg:42');
+  assert.deepEqual(doc.document, { id: 'F1', mime_type: 'application/pdf', filename: 'micro.pdf', caption: 'micro' });
+  const photo = tg.toBotMessage({ message: { message_id: 7, chat: { id: 42 }, photo: [{ file_id: 'small' }, { file_id: 'big' }] } });
+  assert.equal(photo.image.id, 'big');
+  const cb = tg.toBotMessage({ callback_query: { id: 'c1', data: 'ans:3:1', message: { chat: { id: 42 } } } });
+  assert.equal(cb.interactive.list_reply.id, 'ans:3:1');
+});
+
+test('telegram: strangers are told their id, allowed users share the same bank', async () => {
+  await handleMessage({ from: 'tg:777', id: 'tg-x1', type: 'text', text: { body: 'hi' } });
+  assert.equal(out.at(-1).type, 'telegram');
+  assert.match(out.at(-1).text, /Your Telegram ID is 777/);
+
+  config.telegram.allowedIds = ['777'];
+  out = [];
+  const more = BANK.replace(/Drug of choice for absence seizures is/, 'Drug of choice for myoclonic seizures is').replace('Antidote for heparin overdose', 'Antidote for warfarin overdose');
+  files = { tgf: { buffer: Buffer.from(more), mimeType: null } };
+  await handleMessage(
+    { from: 'tg:777', id: 'tg-x2', type: 'document', document: { id: 'tgf', mime_type: 'text/plain', filename: 'pharma2.txt', caption: 'pharma' } },
+    { download: async (id) => files[id] }
+  );
+  assert.match(out.at(-1).text, /Added 2 questions/);
+  assert.match(out.at(-1).text, /1 were already in your bank/);
+
+  // The WhatsApp user sees the Telegram upload.
+  await say('bank');
+  assert.match(lastText(), /Your bank: 5 questions/);
+
+  // Questions on Telegram come with A–D buttons on one row.
+  out = [];
+  await handleMessage({ from: 'tg:777', id: 'tg-x3', type: 'text', text: { body: 'q' } });
+  const kb = out.at(-1).reply_markup.inline_keyboard;
+  assert.equal(kb.length, 1);
+  assert.deepEqual(kb[0].map((b) => b.text), ['A', 'B', 'C', 'D']);
+  await handleMessage({ from: 'tg:777', id: 'tg-x4', callbackId: 'c9', type: 'interactive', interactive: { list_reply: { id: kb[0][0].callback_data } } });
+  assert.match(out.at(-1).text, /Correct|You chose A/);
 });

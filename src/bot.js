@@ -1,5 +1,6 @@
 import * as store from './db.js';
-import * as wa from './whatsapp.js';
+import * as wa from './messenger.js';
+import { answerCallback } from './telegram.js';
 import { config, isAllowed } from './config.js';
 import { SUBJECTS, matchSubject } from './subjects.js';
 import { ingest, formatSummary } from './ingest/index.js';
@@ -11,7 +12,7 @@ const LETTERS = ['A', 'B', 'C', 'D'];
 const HELP = `*NEET PG prep bot* 📚
 
 *Add material*
-Send a PDF, a photo of a page, or paste text: notes, a question bank or PYQs. I split it into questions and notes and file each one under its subject and topic. A caption like "pharma" helps.
+Send a PDF, a photo of a page, or paste text (here or in the Telegram bot; both share one database): notes, a question bank or PYQs. I split it into questions and notes and file each one under its subject and topic. A caption like "pharma" helps.
 
 *Practise*
 - *q*: one question now (*q pharma* for one subject)
@@ -36,7 +37,7 @@ function questionCard(q, header) {
   const tags = [q.subject, q.topic !== 'General' ? q.topic : null].filter(Boolean).join(' › ');
   const pyq = q.origin === 'pyq' ? ` · PYQ${q.year ? ' ' + q.year : ''}${q.exam && q.exam !== 'NEET PG' ? ' ' + q.exam : ''}` : '';
   const opts = q.options.map((o, i) => `*${LETTERS[i]}.* ${o}`).join('\n');
-  return `${header ? `*${header}* · ` : ''}_${tags}${pyq}_\n\n${q.stem}\n\n${opts}\n\nTap *Answer* or reply A, B, C or D.`;
+  return `${header ? `*${header}* · ` : ''}_${tags}${pyq}_\n\n${q.stem}\n\n${opts}\n\nTap an option or reply A, B, C or D.`;
 }
 
 async function sendQuestion(phone, q, header) {
@@ -341,6 +342,11 @@ async function handleUpload(phone, { buffer, mimeType, filename, caption }) {
   await wa.sendText(phone, formatSummary(summary, filename));
 }
 
+const guessMime = (name = '') =>
+  ({ pdf: 'application/pdf', png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', webp: 'image/webp' })[
+    name.split('.').pop().toLowerCase()
+  ] || 'text/plain';
+
 const looksLikeMaterial = (text) => text.length > 500 || (/\n\s*\(?[aA]\s*[).]/.test(text) && /\n\s*\(?[dD]\s*[).]/.test(text));
 
 // ---------- entry point ----------
@@ -349,9 +355,16 @@ const looksLikeMaterial = (text) => text.length > 500 || (/\n\s*\(?[aA]\s*[).]/.
  * Handle one inbound WhatsApp message (the `messages[i]` object from the webhook).
  * `download(mediaId)` is injectable for tests.
  */
-export async function handleMessage(msg, { download = wa.downloadMedia } = {}) {
+export async function handleMessage(msg, { download = (id) => wa.downloadMedia(msg.from, id) } = {}) {
   const phone = msg.from;
-  if (!isAllowed(phone)) return;
+  if (msg.callbackId) answerCallback(msg.callbackId);
+  if (!isAllowed(phone)) {
+    // Telegram bots are public, so strangers can find them. Tell them their id so the owner can allow it.
+    if (wa.isTelegram(phone)) {
+      await wa.sendText(phone, `This is a private bot. Your Telegram ID is ${phone.slice(3)}. To use it, add that number to TELEGRAM_ALLOWED_IDS in the bot's settings.`);
+    }
+    return;
+  }
   const user = await store.getUser(phone);
   const firstContact = !user.last_inbound_at;
   // A brand-new user starts getting the daily question tomorrow, not a minute after saying hi.
@@ -367,7 +380,7 @@ export async function handleMessage(msg, { download = wa.downloadMedia } = {}) {
       const { buffer, mimeType } = await download(media.id);
       return await handleUpload(phone, {
         buffer,
-        mimeType: media.mime_type || mimeType,
+        mimeType: media.mime_type || mimeType || guessMime(media.filename),
         filename: media.filename || (msg.type === 'image' ? 'photo' : 'document'),
         caption: media.caption || '',
       });
@@ -454,7 +467,8 @@ export async function handleMessage(msg, { download = wa.downloadMedia } = {}) {
 /** Send today's question to one user (called by the scheduler). */
 export async function sendDaily(phone) {
   const user = await store.getUser(phone);
-  if (inWindow(user)) {
+  // Telegram has no 24-hour rule; WhatsApp does.
+  if (wa.isTelegram(phone) || inWindow(user)) {
     await askSingle(phone, user, { subject: user.daily_subject, mode: 'daily' });
   } else if (config.dailyTemplate.name) {
     // Outside WhatsApp's 24h window only an approved template is allowed; tapping it opens the window.
