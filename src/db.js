@@ -112,8 +112,16 @@ export async function initDb(url = config.databaseUrl || config.pgliteDir) {
       connectionString: url,
       ssl: /localhost|127\.0\.0\.1/.test(url) ? false : { rejectUnauthorized: false },
       max: 5,
+      idleTimeoutMillis: 60000,
     });
-    db = { query: (t, p) => pool.query(t, p), close: () => pool.end() };
+    // Supabase's pooler drops idle connections now and then; without a listener that error would crash the server.
+    pool.on('error', (e) => console.error('Idle database connection closed:', e.message));
+    // A query that hits a just-dropped connection is retried once on a fresh one.
+    const retryable = (e) => ['57P01', '08006', '08003'].includes(e.code) || /Connection terminated|ECONNRESET/i.test(e.message);
+    db = {
+      query: (t, p) => pool.query(t, p).catch((e) => (retryable(e) ? pool.query(t, p) : Promise.reject(e))),
+      close: () => pool.end(),
+    };
   } else {
     const { PGlite } = await import('@electric-sql/pglite');
     if (url !== 'memory') mkdirSync(url, { recursive: true });
