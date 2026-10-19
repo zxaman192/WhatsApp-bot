@@ -52,7 +52,13 @@ app.post('/cron/daily', async (req, res) => {
   res.json({ sent: await runDueDailies() });
 });
 
+if (process.env.RENDER && !config.databaseUrl) {
+  // The embedded database is for local testing only: it doesn't fit in a small instance and is wiped on every deploy.
+  console.error('DATABASE_URL is not set. Add your Supabase connection string in the Render environment settings.');
+  process.exit(1);
+}
 await initDb();
+console.log(`Database ready (${config.databaseUrl ? 'Postgres' : 'local PGlite'}).`);
 startScheduler();
 app.listen(config.port, () => {
   console.log(`NEET PG bot listening on :${config.port} (${config.dryRun ? 'DRY_RUN, not sending' : 'live'})`);
