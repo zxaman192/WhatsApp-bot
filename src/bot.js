@@ -4,7 +4,7 @@ import { answerCallback } from './telegram.js';
 import { config, isAllowed } from './config.js';
 import { SUBJECTS, matchSubject } from './subjects.js';
 import { ingest, formatSummary } from './ingest/index.js';
-import { claudeAvailable, explainFromNotes } from './ingest/claude.js';
+import { aiAvailable, explain as aiExplain } from './ingest/ai.js';
 import { localNow } from './time.js';
 
 const LETTERS = ['A', 'B', 'C', 'D'];
@@ -175,7 +175,7 @@ async function explain(phone, query) {
   const qs = await store.searchQuestions(query, { limit: 300 });
   const tail = qs.length ? `\n\n📝 ${qs.length} related question${qs.length > 1 ? 's' : ''} in your bank. Send *test ${query.slice(0, 40)}* to practise them.` : '';
 
-  if (!claudeAvailable()) {
+  if (!aiAvailable()) {
     if (!notes.length) return wa.sendText(phone, `Nothing about "${query}" in your notes yet.${tail}`);
     const body = notes.map((n, i) => `*[${i + 1}] ${where(n)}*\n${n.snippet}`).join('\n\n');
     return wa.sendText(phone, `From your notes:\n\n${body}${tail}`);
@@ -183,7 +183,7 @@ async function explain(phone, query) {
 
   await wa.sendText(phone, notes.length ? '🔎 Looking through your notes…' : '🔎 Nothing in your notes on that yet, answering from standard sources…');
   const excerpts = notes.map((n) => ({ label: where(n), text: n.content.slice(0, 3000) }));
-  const answer = await explainFromNotes(query, excerpts);
+  const answer = await aiExplain(query, excerpts);
   const sources = notes.length ? `\n\n📚 *Sources*\n${notes.map((n, i) => `[${i + 1}] ${where(n)}`).join('\n')}` : '';
   await wa.sendText(phone, `${answer}${sources}${tail}`);
 }

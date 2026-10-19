@@ -5,7 +5,8 @@ import { config } from '../src/config.js';
 
 config.dryRun = true;
 config.telegram.dryRun = true;
-config.anthropic.apiKey = ''; // never call Claude from tests
+config.anthropic.apiKey = ''; // never call an AI from tests
+config.gemini.apiKey = '';
 config.allowedNumbers = [];
 config.dailyTemplate.name = 'daily_question';
 
@@ -176,10 +177,47 @@ test('daily settings and scheduler', async () => {
   assert.equal(out[0].type, 'template');
 });
 
-test('PDF upload without Claude key explains what is missing', async () => {
-  files = { p1: { buffer: Buffer.from('%PDF-1.4'), mimeType: 'application/pdf' } };
-  await send({ type: 'document', document: { id: 'p1', mime_type: 'application/pdf', filename: 'notes.pdf' } });
-  assert.match(lastText(), /needs the Claude API key/);
+test('photo upload without Claude key explains what is missing', async () => {
+  files = { p1: { buffer: Buffer.from('jpg'), mimeType: 'image/jpeg' } };
+  await send({ type: 'image', image: { id: 'p1', mime_type: 'image/jpeg' } });
+  assert.match(lastText(), /needs an AI key/);
+});
+
+async function textPdf(pages) {
+  const { PDFDocument, StandardFonts } = await import('pdf-lib');
+  const doc = await PDFDocument.create();
+  const font = await doc.embedFont(StandardFonts.Helvetica);
+  for (const lines of pages) {
+    const page = doc.addPage();
+    lines.forEach((t, i) => page.drawText(t, { x: 40, y: 780 - i * 18, size: 11, font }));
+  }
+  return Buffer.from(await doc.save());
+}
+
+test('text PDF without Claude key: MCQs with an answer key are sorted by keywords, with pages', async () => {
+  const pdf = await textPdf([
+    ['1. Most common site of hypertensive intracerebral haemorrhage stroke?', 'a) Putamen', 'b) Pons', 'c) Cerebellum', 'd) Thalamus'],
+    ['2. Antidote for organophosphate poison is', 'a) Atropine', 'b) Naloxone', 'c) Flumazenil', 'd) Fomepizole', 'Answer key', '1-a 2-a'],
+  ]);
+  files = { pdf1: { buffer: pdf, mimeType: 'application/pdf' } };
+  await send({ type: 'document', document: { id: 'pdf1', mime_type: 'application/pdf', filename: 'mixed_pyq.pdf' } });
+  assert.match(lastText(), /Added 2 questions/);
+  assert.match(lastText(), /\*Medicine\*\n- Neurology: 1 Q/);
+  assert.match(lastText(), /\*Forensic Medicine\*\n- Toxicology: 1 Q/);
+  const [hit] = await store.searchQuestions('organophosphate');
+  assert.equal(hit.page, 2);
+});
+
+test('text PDF without MCQs is kept as notes per page', async () => {
+  const pdf = await textPdf([
+    ['Rigor mortis', 'Rigor mortis starts in the myocardium and appears first in the eyelids.', 'It passes off in the same order it appears. Cadaveric spasm differs.'],
+  ]);
+  files = { pdf2: { buffer: pdf, mimeType: 'application/pdf' } };
+  await send({ type: 'document', document: { id: 'pdf2', mime_type: 'application/pdf', filename: 'fmt_notes.pdf' } });
+  assert.match(lastText(), /Added 1 note sections/);
+  assert.match(lastText(), /Forensic Medicine/);
+  await say('where rigor mortis');
+  assert.match(lastText(), /Forensic Medicine › Thanatology \(fmt_notes.pdf p.1\)/);
 });
 
 test('PDFs are split into 15-page chunks with page offsets', async () => {
@@ -220,8 +258,10 @@ test('telegram: strangers are told their id, allowed users share the same bank',
   assert.match(out.at(-1).text, /1 were already in your bank/);
 
   // The WhatsApp user sees the Telegram upload.
+  const before = (await store.bankSummary()).reduce((a, r) => a + r.n, 0);
   await say('bank');
-  assert.match(lastText(), /Your bank: 5 questions/);
+  assert.match(lastText(), new RegExp(`Your bank: ${before} questions`));
+  assert.ok((await store.searchQuestions('myoclonic')).length, 'Telegram upload is searchable from WhatsApp');
 
   // Questions on Telegram come with A–D buttons on one row.
   out = [];
@@ -231,4 +271,30 @@ test('telegram: strangers are told their id, allowed users share the same bank',
   assert.deepEqual(kb[0].map((b) => b.text), ['A', 'B', 'C', 'D']);
   await handleMessage({ from: 'tg:777', id: 'tg-x4', callbackId: 'c9', type: 'interactive', interactive: { list_reply: { id: kb[0][0].callback_data } } });
   assert.match(out.at(-1).text, /Correct|You chose A/);
+});
+
+test('Gemini request shape and response parsing (mocked)', async () => {
+  const { extractWithGemini } = await import('../src/ingest/gemini.js');
+  const realFetch = globalThis.fetch;
+  let sent;
+  globalThis.fetch = async (url, init) => {
+    sent = { url, body: JSON.parse(init.body), headers: init.headers };
+    const result = { kind: 'question_bank', questions: [], notes: [] };
+    return new Response(JSON.stringify({ candidates: [{ finishReason: 'STOP', content: { parts: [{ text: JSON.stringify(result) }] } }] }));
+  };
+  try {
+    config.gemini.apiKey = 'test-key';
+    const out = await extractWithGemini([{ type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: 'QUJD' } }], { hint: 'pharma' });
+    assert.equal(out.kind, 'question_bank');
+    assert.match(sent.url, /models\/gemini-[\w.-]+:generateContent$/);
+    assert.equal(sent.headers['x-goog-api-key'], 'test-key');
+    assert.deepEqual(sent.body.contents[0].parts[0], { inline_data: { mime_type: 'application/pdf', data: 'QUJD' } });
+    const schema = sent.body.generationConfig.responseSchema;
+    assert.equal(schema.type, 'OBJECT');
+    assert.equal(schema.properties.questions.items.properties.subject.type, 'STRING');
+    assert.ok(!JSON.stringify(schema).includes('additionalProperties'));
+  } finally {
+    globalThis.fetch = realFetch;
+    config.gemini.apiKey = '';
+  }
 });

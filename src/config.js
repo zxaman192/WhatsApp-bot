@@ -32,9 +32,15 @@ export const config = {
   },
   // Public https address of this server, used to register the Telegram webhook. Render sets RENDER_EXTERNAL_URL.
   publicUrl: env.PUBLIC_URL || env.RENDER_EXTERNAL_URL || '',
+  // claude | gemini | none. Empty = use whichever key is set (Gemini first).
+  aiProvider: (env.AI_PROVIDER || '').toLowerCase(),
+  gemini: {
+    apiKey: env.GEMINI_API_KEY || '',
+    model: env.GEMINI_MODEL || 'gemini-2.5-flash',
+  },
   anthropic: {
     apiKey: env.ANTHROPIC_API_KEY || '',
-    model: env.CLAUDE_MODEL || 'claude-opus-5-5',
+    model: env.CLAUDE_MODEL || 'claude-haiku-5-5',
   },
   timezone: env.TIMEZONE || 'Asia/Kolkata',
   defaultDailyTime: env.DEFAULT_DAILY_TIME || '07:00',

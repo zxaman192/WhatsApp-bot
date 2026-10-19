@@ -33,16 +33,27 @@ function splitOptions(text) {
   return { before: text.slice(0, seq[0].index).trim(), options };
 }
 
+// A line made only of answer-key pairs: "1-b 2-c 3-a", "12. (d)", "1 b, 2 a".
+const KEY_LINE = /^\s*(?:\d{1,4}\s*[.)\-:]?\s*\(?[a-dA-D]\)?[\s,;|]*)+$/;
+const KEY_PAIR = /(\d{1,4})\s*[.)\-:]?\s*\(?([a-dA-D])\)?(?![a-zA-Z])/g;
+
 export function parseFormattedMcqs(text) {
   const lines = text.replace(/\r/g, '').split('\n');
+  const key = {};
   const blocks = [];
   let cur = null;
-  for (const line of lines) {
+  for (let li = 0; li < lines.length; li++) {
+    const line = lines[li];
+    if (KEY_LINE.test(line) && /\d/.test(line)) {
+      for (const k of line.matchAll(KEY_PAIR)) key[k[1]] = 'abcd'.indexOf(k[2].toLowerCase());
+      continue;
+    }
+    if (/^\s*(answer\s*key|answers|key)\s*:?\s*$/i.test(line)) continue;
     const m = line.match(Q_START);
     // A new numbered line starts a question unless it looks like an option or answer line.
     if (m && !ANS.test(line) && !/^\s*\(?[a-d]\s*[).]/i.test(line)) {
       if (cur) blocks.push(cur);
-      cur = { lines: [m[2]] };
+      cur = { lines: [m[2]], num: m[1], line: li };
     } else if (cur) {
       cur.lines.push(line);
     }
@@ -64,6 +75,7 @@ export function parseFormattedMcqs(text) {
       if (inExpl) { explanation += (explanation ? ' ' : '') + l.trim(); continue; }
       body.push(l);
     }
+    if (answer == null && key[b.num] != null) answer = key[b.num];
     const split = splitOptions(body.join('\n'));
     if (!split || answer == null || answer < 0 || !split.before) { skipped++; continue; }
     const y = split.before.match(YEAR);
@@ -73,6 +85,7 @@ export function parseFormattedMcqs(text) {
       answer,
       explanation: explanation.trim(),
       year: y && /pg|aiims|ini|pgi|fmge|aipgmee|jipmer/i.test(y[0]) ? y[1] : '',
+      line: b.line,
     });
   }
   return { questions, skipped, blocks: blocks.length };
