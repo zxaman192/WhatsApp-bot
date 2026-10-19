@@ -17,6 +17,9 @@ export const config = {
     .filter(Boolean),
   telegram: {
     token: env.TELEGRAM_BOT_TOKEN || '',
+    // Telegram bots only ever reply to people who message them, and only allowed ids get past the first
+    // reply, so Telegram is live by default. DRY_RUN applies to WhatsApp.
+    dryRun: (env.TELEGRAM_DRY_RUN || 'false').toLowerCase() === 'true',
     // Telegram sends this back on every webhook call so we know the request is genuine.
     webhookSecret:
       env.TELEGRAM_WEBHOOK_SECRET ||

@@ -33,7 +33,7 @@ async function send(to, text, keyboard) {
     disable_web_page_preview: true,
     ...(keyboard ? { reply_markup: { inline_keyboard: keyboard } } : {}),
   };
-  if (config.dryRun) return sink(to, { type: 'telegram', ...payload });
+  if (config.telegram.dryRun) return sink(to, { type: 'telegram', ...payload });
   try {
     await call('sendMessage', payload);
   } catch (e) {
@@ -67,7 +67,7 @@ export async function downloadFile(fileId) {
 }
 
 export function answerCallback(callbackId) {
-  if (config.dryRun) return;
+  if (config.telegram.dryRun) return;
   return call('answerCallbackQuery', { callback_query_id: callbackId }).catch(() => {});
 }
 

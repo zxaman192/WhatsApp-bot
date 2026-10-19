@@ -14,6 +14,7 @@ import { setSink } from '../src/whatsapp.js';
 import { handleMessage, sendDaily } from '../src/bot.js';
 
 config.dryRun = true;
+config.telegram.dryRun = true;
 const ME = config.allowedNumbers[0] || '910000000000';
 const MIME = { '.pdf': 'application/pdf', '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.webp': 'image/webp', '.txt': 'text/plain', '.md': 'text/plain' };
 

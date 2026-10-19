@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import { config } from '../src/config.js';
 
 config.dryRun = true;
+config.telegram.dryRun = true;
 config.anthropic.apiKey = ''; // never call Claude from tests
 config.allowedNumbers = [];
 config.dailyTemplate.name = 'daily_question';
