@@ -27,6 +27,29 @@ function validSignature(req) {
 }
 
 app.get('/', (_req, res) => res.send('NEET PG bot is running.'));
+// Meta needs a privacy policy and data-deletion page before a WhatsApp app can be published.
+const page = (title, body) =>
+  `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${title}</title>` +
+  `<style>body{font:16px/1.6 system-ui,sans-serif;max-width:680px;margin:40px auto;padding:0 16px;color:#222}h1{font-size:24px}</style></head>` +
+  `<body><h1>${title}</h1>${body}</body></html>`;
+app.get('/privacy', (_req, res) =>
+  res.send(
+    page(
+      'NEET PG Study Bot: Privacy Policy',
+      `<p>This is a private study bot used by its owner and people the owner allows. It stores your phone number or Telegram ID, the messages and files you send it, your answers to practice questions, and your settings (daily question time, exam date, name).</p>
+<p>This data is used only to run the bot: to file your study material, ask you questions, track your progress and send your daily question. It is stored in the bot's own database and is not sold or shared. Uploaded material may be sent to an AI service (Google Gemini or Groq) to read it and write questions.</p>
+<p>To have your data deleted, see the <a href="/data-deletion">data deletion instructions</a>.</p>`
+    )
+  )
+);
+app.get('/data-deletion', (_req, res) =>
+  res.send(
+    page(
+      'NEET PG Study Bot: Data Deletion',
+      `<p>To delete your data, send the message <b>delete my data</b> to the bot on WhatsApp or Telegram, or ask the bot's owner. Your answers, progress and settings are then removed within 7 days. Study material you uploaded can be removed from the bot's Database menu.</p>`
+    )
+  )
+);
 app.get('/health', (_req, res) => res.json({ ok: true, dryRun: config.dryRun }));
 
 // Meta calls this once when you save the webhook URL.

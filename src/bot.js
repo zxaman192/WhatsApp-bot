@@ -1471,6 +1471,10 @@ Or type e.g. *daily 07:30*.`, DAILY_TIMES.map((t) => ({ id: `dtime:${t.replace('
         const r = await store.deleteSource(f.id);
         return await wa.sendButtons(phone, `🗑 Deleted *${f.filename || 'untitled'}*: ${plural(r.questions, 'question')} and ${plural(r.notes, 'note section')} removed.`, [{ id: 'db:files:0', title: '📄 My uploads' }, BACK]);
       }
+      if (kind === 'wipeok') {
+        const r = await store.deleteUserData(phone);
+        return await wa.sendText(phone, `🗑 Done. Your data is deleted (${plural(r.attempts, 'answer')} removed). Send *menu* any time to start fresh.`);
+      }
       if (kind === 'dbfix') return await dbFix(phone, user, Number(a), Number(b));
       if (kind === 'dbdq') return await dbDeleteQuestion(phone, user, Number(a));
       if (kind === 'grand') return await startGrand(phone, user, 200);
@@ -1559,6 +1563,9 @@ Or type e.g. *daily 07:30*.`, DAILY_TIMES.map((t) => ({ id: `dtime:${t.replace('
         return await dbFix(phone, user, user.state.lastQid, LETTERS.indexOf(l[1].toUpperCase()));
       }
       case 'delete': case 'remove':
+        if (/^my\s+(data|account|progress)/i.test(rest)) {
+          return await wa.sendButtons(phone, '⚠️ *Delete my data*\n\nThis erases your answers, scores, revision schedule and settings. Uploaded notes and questions stay. This can’t be undone.', [{ id: 'wipeok', title: '🗑 Yes, delete' }, BACK]);
+        }
         return await dbDeletePrompt(phone, user);
       case 'q': case 'question': case 'quiz': case 'next':
         return await askSingle(phone, user, { subject: matchSubject(restWords[0]) });

@@ -287,6 +287,14 @@ export async function deleteSource(id) {
   return { questions: qs.length, notes: ns.length };
 }
 
+/** Forget one person: their answers, review schedule and settings. Uploaded study material stays. */
+export async function deleteUserData(phone) {
+  const a = await q('DELETE FROM attempts WHERE phone = $1 RETURNING id', [phone]);
+  await q('DELETE FROM reviews WHERE phone = $1', [phone]);
+  await q('DELETE FROM users WHERE phone = $1', [phone]);
+  return { attempts: a.length };
+}
+
 export async function deleteQuestion(id) {
   return (await q('DELETE FROM questions WHERE id = $1 RETURNING id', [id])).length > 0;
 }

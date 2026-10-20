@@ -282,3 +282,21 @@ test('note references show the matching facts under a bold title', async () => {
   const old = 'Tracheostomy: Trachea has 16-20 rings. Most common physiological complication is apnea.';
   assert.equal(noteLines(old, 'physiological complication apnea', 2), '*Tracheostomy*\n• Most common physiological complication is apnea.');
 });
+
+test('delete my data asks first, then forgets the person but keeps the bank', async () => {
+  const WHO = '914444444444';
+  await say('hi', WHO);
+  await say('q', WHO);
+  await say('A', WHO);
+  out = [];
+  await say('delete my data', WHO);
+  assert.match(lastText(), /can’t be undone/);
+  assert.deepEqual(buttonsOf(out.at(-1))[0], 'wipeok');
+  await tap('wipeok', WHO);
+  assert.match(lastText(), /Your data is deleted \(1 answer removed\)/);
+  assert.equal((await store.userStats(WHO)).overall.n, 0);
+  out = [];
+  await say('menu', WHO);
+  assert.doesNotMatch(texts(), /something went wrong/);
+  assert.ok((await store.countQuestions()) > 0);
+});
