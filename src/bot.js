@@ -915,15 +915,23 @@ async function leaderboard(phone, user) {
 
 async function handleUpload(phone, { buffer, mimeType, filename, caption }) {
   await wa.sendText(phone, `📥 Got ${filename ? `*${filename}*` : 'it'}. Reading and sorting it now; big files can take a few minutes.`);
-  const summary = await ingest({
-    buffer,
-    mimeType,
-    filename,
-    caption,
-    addedBy: phone,
-    onProgress: (msg) => wa.sendText(phone, msg),
-  });
-  await wa.sendText(phone, formatSummary(summary, filename));
+  // Render's free plan sleeps after 15 idle minutes, which would kill a long upload; ping ourselves meanwhile.
+  const keepAwake = config.publicUrl
+    ? setInterval(() => fetch(`${config.publicUrl.replace(/\/$/, '')}/health`).catch(() => {}), 4 * 60 * 1000)
+    : null;
+  try {
+    const summary = await ingest({
+      buffer,
+      mimeType,
+      filename,
+      caption,
+      addedBy: phone,
+      onProgress: (msg) => wa.sendText(phone, msg).catch((e) => console.error('Progress message failed:', e.message)),
+    });
+    await wa.sendText(phone, formatSummary(summary, filename));
+  } finally {
+    clearInterval(keepAwake);
+  }
 }
 
 const guessMime = (name = '') =>

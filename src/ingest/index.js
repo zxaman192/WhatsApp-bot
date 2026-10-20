@@ -7,6 +7,7 @@ import { imageBlock, pdfBlock, textBlock } from './claude.js';
 import { aiAvailable, extract, mediaAvailable } from './ai.js';
 
 const PAGES_PER_CHUNK = 15;
+const PARALLEL_PARTS = 3;
 const TEXT_CHUNK_CHARS = 40000;
 const IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'image/gif'];
 
@@ -161,15 +162,35 @@ export async function ingest({ buffer, mimeType, filename, caption = '', addedBy
     return summary;
   }
 
+  // Read up to 3 parts at once and save each as soon as it is done, so a long PDF fills the bank as it goes.
+  const inFlight = new Set();
+  let parts = 1;
+  let done = 0;
+  let nextMark = 0.25;
   for await (const chunk of pdfChunks(buffer)) {
-    if (chunk.total > PAGES_PER_CHUNK) await onProgress(`Reading pages ${chunk.firstPage}-${chunk.lastPage} of ${chunk.total}…`);
-    try {
-      const result = await extract([pdfBlock(chunk.buffer)], { hint, existingTopics: await store.existingTopics() });
-      await save(result, chunk.firstPage - 1);
-    } catch (e) {
-      summary.errors.push(`Pages ${chunk.firstPage}-${chunk.lastPage}: ${e.message}`);
+    if (chunk.firstPage === 1 && chunk.total > PAGES_PER_CHUNK) {
+      parts = Math.ceil(chunk.total / PAGES_PER_CHUNK);
+      await onProgress(`This PDF has ${chunk.total} pages. I'm reading it in ${parts} parts and saving questions as I go, so you can practise while it runs.`);
     }
+    const job = (async () => {
+      try {
+        const result = await extract([pdfBlock(chunk.buffer)], { hint, existingTopics: await store.existingTopics() });
+        await save(result, chunk.firstPage - 1);
+      } catch (e) {
+        summary.errors.push(`Pages ${chunk.firstPage}-${chunk.lastPage}: ${e.message}`);
+      }
+      done++;
+      console.log(`${filename}: part ${done}/${parts} read, ${summary.questions} questions and ${summary.notes} notes so far`);
+      if (parts > 1 && done < parts && done / parts >= nextMark) {
+        while (done / parts >= nextMark) nextMark += 0.25;
+        await onProgress(`⏳ ${Math.round((100 * done) / parts)}% read: ${summary.questions} questions and ${summary.notes} note sections saved so far.`);
+      }
+    })();
+    inFlight.add(job);
+    job.finally(() => inFlight.delete(job));
+    if (inFlight.size >= PARALLEL_PARTS) await Promise.race(inFlight);
   }
+  await Promise.all(inFlight);
   return summary;
 }
 

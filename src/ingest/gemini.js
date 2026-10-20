@@ -27,9 +27,12 @@ function toParts(blocks) {
   });
 }
 
-export async function generate({ system, parts, json, maxTokens, schema = GEMINI_SCHEMA }) {
+const RETRY_STATUS = [429, 500, 503];
+
+export async function generate({ system, parts, json, maxTokens, schema = GEMINI_SCHEMA }, attempt = 0) {
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${config.gemini.model}:generateContent`;
   const res = await fetch(url, {
+    signal: AbortSignal.timeout(10 * 60 * 1000),
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'x-goog-api-key': config.gemini.apiKey },
     body: JSON.stringify({
@@ -42,6 +45,11 @@ export async function generate({ system, parts, json, maxTokens, schema = GEMINI
     }),
   });
   const data = await res.json().catch(() => ({}));
+  // Free-tier rate limits and busy servers: wait and try again (15 s, then 45 s).
+  if (RETRY_STATUS.includes(res.status) && attempt < 2) {
+    await new Promise((r) => setTimeout(r, (attempt ? 45 : 15) * 1000));
+    return generate({ system, parts, json, maxTokens, schema }, attempt + 1);
+  }
   if (!res.ok) throw new Error(`Gemini error (${res.status}): ${data.error?.message || 'unknown'}`);
   const cand = data.candidates?.[0];
   if (!cand) throw new Error(`Gemini returned nothing${data.promptFeedback?.blockReason ? ` (${data.promptFeedback.blockReason})` : ''}.`);
