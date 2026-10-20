@@ -43,6 +43,11 @@ export const config = {
       .map((m) => m.trim())
       .filter(Boolean),
   },
+  // Backup when every Gemini model is out of free quota: Llama on Groq (free key at console.groq.com).
+  groq: {
+    apiKey: env.GROQ_API_KEY || '',
+    model: env.GROQ_MODEL || 'llama-3.3-70b-versatile',
+  },
   anthropic: {
     apiKey: env.ANTHROPIC_API_KEY || '',
     model: env.CLAUDE_MODEL || 'claude-haiku-5-5',

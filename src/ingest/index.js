@@ -248,7 +248,7 @@ export async function runJob(jobId, { onProgress = async () => {} } = {}) {
       const from = part * PAGES_PER_CHUNK + 1;
       const to = Math.min(total, from + PAGES_PER_CHUNK); // one page of overlap with the next part
       try {
-        for (const r of await extractRange(src, from, to, { hint, answerKey })) await save(r.result, r.offset);
+        for (const r of await extractRange(src, from, to, { hint, answerKey, pages })) await save(r.result, r.offset);
         done.add(part);
       } catch (e) {
         if (e instanceof AiBusyError) { busy = e; return; }
@@ -287,14 +287,15 @@ export async function runJob(jobId, { onProgress = async () => {} } = {}) {
 }
 
 /** Extract pages from..to; if the answer is cut off (too much output), split the range and try both halves. */
-async function extractRange(src, from, to, { hint, answerKey }) {
+async function extractRange(src, from, to, { hint, answerKey, pages = [] }) {
   try {
-    const result = await extract([pdfBlock(await subPdf(src, from, to))], { hint, answerKey, existingTopics: await store.existingTopics() });
+    const fallbackText = pages.slice(from - 1, to).map((p, i) => `--- Page ${from + i} ---\n${p}`).join('\n');
+    const result = await extract([pdfBlock(await subPdf(src, from, to))], { hint, answerKey, fallbackText, existingTopics: await store.existingTopics() });
     return [{ result, offset: from - 1 }];
   } catch (e) {
     if (e.code !== 'MAX_TOKENS' || to <= from) throw e;
     const mid = Math.floor((from + to) / 2);
-    return [...(await extractRange(src, from, mid, { hint, answerKey })), ...(await extractRange(src, mid + 1, to, { hint, answerKey }))];
+    return [...(await extractRange(src, from, mid, { hint, answerKey, pages })), ...(await extractRange(src, mid + 1, to, { hint, answerKey, pages }))];
   }
 }
 

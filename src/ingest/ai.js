@@ -3,7 +3,20 @@ import { config } from '../config.js';
 import { claudeAvailable, extractWithClaude, explainFromNotes, claudeJson, WHY_SYSTEM, whyPrompt } from './claude.js';
 import { geminiAvailable, extractWithGemini, explainWithGemini, generate, toGeminiSchema, toParts, AiBusyError } from './gemini.js';
 
+import { groqAvailable, extractWithGroq, explainWithGroq, transcribeWithGroq, chat as groqChat } from './groq.js';
+
 export { AiBusyError };
+
+/** Run `primary`; if it is out of quota and a Groq key is set, run `backup` instead. */
+async function withBackup(primary, backup) {
+  try {
+    return await primary();
+  } catch (e) {
+    if (!(e instanceof AiBusyError) || !groqAvailable() || !backup) throw e;
+    console.warn(`Gemini busy (${e.message.slice(0, 80)}); using Llama on Groq`);
+    return backup();
+  }
+}
 
 export function provider() {
   const want = config.aiProvider;
@@ -15,10 +28,24 @@ export function provider() {
 
 export const aiAvailable = () => provider() !== null;
 
-export const extract = (blocks, opts) => (provider() === 'gemini' ? extractWithGemini(blocks, opts) : extractWithClaude(blocks, opts));
+/**
+ * opts.fallbackText: the text layer of a PDF part, so the text-only backup can still read it.
+ */
+export const extract = (blocks, { fallbackText = '', ...opts } = {}) => {
+  if (provider() !== 'gemini') return extractWithClaude(blocks, opts);
+  const text = blocks.every((b) => b.type === 'text') ? blocks.map((b) => b.text).join('\n') : fallbackText;
+  return withBackup(
+    () => extractWithGemini(blocks, opts),
+    text && text.trim().length >= 200 ? () => extractWithGroq(text, opts) : null
+  );
+};
 
 export const explain = async (question, excerpts, opts) =>
-  tidy(await (provider() === 'gemini' ? explainWithGemini(question, excerpts, opts) : explainFromNotes(question, excerpts, opts)));
+  tidy(
+    await (provider() === 'gemini'
+      ? withBackup(() => explainWithGemini(question, excerpts, opts), () => explainWithGroq(question, excerpts, opts))
+      : explainFromNotes(question, excerpts, opts))
+  );
 
 /** Models slip into Markdown; turn it into chat formatting (*bold*, • bullets) and drop stray blank lines. */
 export function tidy(text) {
@@ -39,6 +66,10 @@ export const mediaAvailable = () => provider() === 'gemini';
 
 /** Speech to text (Gemini). */
 export async function transcribe(buffer, mimeType) {
+  return withBackup(() => transcribeWithGemini(buffer, mimeType), () => transcribeWithGroq(buffer, mimeType.split(';')[0]));
+}
+
+async function transcribeWithGemini(buffer, mimeType) {
   const text = await generate({
     system:
       'Transcribe the voice message. Write medical terms, drug and disease names in standard English spelling (Latin script), even if the rest is Hindi or Hinglish. Output only the transcript, nothing else.',
@@ -73,7 +104,12 @@ export async function flashcards(noteText) {
   const content = `Notes:\n${noteText.slice(0, 6000)}`;
   const out =
     provider() === 'gemini'
-      ? JSON.parse(await generate({ system: FLASH_SYSTEM, parts: [{ text: content }], json: true, maxTokens: 4000, schema: toGeminiSchema(FLASH_SCHEMA), timeoutMs: 60 * 1000 }))
+      ? JSON.parse(
+          await withBackup(
+            () => generate({ system: FLASH_SYSTEM, parts: [{ text: content }], json: true, maxTokens: 4000, schema: toGeminiSchema(FLASH_SCHEMA), timeoutMs: 60 * 1000 }),
+            () => groqChat({ system: `${FLASH_SYSTEM} Reply with JSON: {"cards": [{"front": "...", "back": "..."}]}`, user: content, json: true, maxTokens: 2000 })
+          )
+        )
       : await claudeJson(FLASH_SYSTEM, content, FLASH_SCHEMA, 2000);
   return (out.cards || []).filter((c) => c.front && c.back).slice(0, 5);
 }

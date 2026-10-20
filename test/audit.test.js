@@ -245,3 +245,32 @@ test('Telegram gets safe HTML, AI Markdown is tidied', async () => {
   assert.equal(toTelegramHtml('> *A. Ethosuximide*'), '<blockquote><b>A. Ethosuximide</b></blockquote>');
   assert.equal(tidy('## DOC\n**Ethosuximide**\n- T-type Ca'), '*DOC*\n*Ethosuximide*\n• T-type Ca');
 });
+
+test('Llama on Groq answers when every Gemini model is out of quota', async () => {
+  const { resetGroq } = await import('../src/ingest/groq.js');
+  const real = globalThis.fetch;
+  const hosts = [];
+  globalThis.fetch = async (url) => {
+    hosts.push(new URL(url).host);
+    if (String(url).includes('generativelanguage')) {
+      return new Response(JSON.stringify({ error: { code: 429, message: 'Quota exceeded. Please retry in 5h.' } }), { status: 429 });
+    }
+    return new Response(JSON.stringify({ choices: [{ finish_reason: 'stop', message: { content: '💡 **Ethosuximide** is the DOC\n- T-type Ca channel blocker [1]' } }] }));
+  };
+  config.gemini.apiKey = 'test-key';
+  config.groq.apiKey = 'groq-key';
+  resetResting();
+  resetGroq();
+  try {
+    out = [];
+    await say('explain absence seizures');
+    assert.ok(hosts.includes('api.groq.com'), 'Groq was called');
+    assert.match(texts(), /💡 \*Ethosuximide\* is the DOC\n• T-type Ca channel blocker \[1\]/);
+    assert.doesNotMatch(texts(), /free quota/);
+  } finally {
+    globalThis.fetch = real;
+    config.gemini.apiKey = '';
+    config.groq.apiKey = '';
+    resetResting();
+  }
+});

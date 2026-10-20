@@ -70,7 +70,7 @@ Tests: `npm test`
 
 ## Choosing an AI
 
-- **Gemini (free).** Get a key at aistudio.google.com → Get API key (no card) and set `GEMINI_API_KEY`. The free tier allows about 20 requests a day per model, so the bot tries `GEMINI_MODEL` first and then each model in `GEMINI_FALLBACK_MODELS`, resting any model that is out of quota until it resets. When every model is out, practice still works, `explain` and `why` answer from your notes, and long PDFs pause and finish by themselves once the quota is back (upload jobs are saved in the database, so restarts don't lose them either). Google may use free-tier data to improve its products; check their terms before uploading anything private.
+- **Gemini (free).** Get a key at aistudio.google.com → Get API key (no card) and set `GEMINI_API_KEY`. The free tier allows about 20 requests a day per model, so the bot tries `GEMINI_MODEL` first and then each model in `GEMINI_FALLBACK_MODELS`, resting any model that is out of quota until it resets. When every model is out, practice still works, `explain` and `why` answer from your notes, and long PDFs pause and finish by themselves once the quota is back (upload jobs are saved in the database, so restarts don't lose them either). Add `GROQ_API_KEY` (free at console.groq.com) and Llama on Groq takes over while Gemini is out: it answers questions, makes flashcards, transcribes voice notes, and reads pasted text and the text layer of PDFs. Google may use free-tier data to improve its products; check their terms before uploading anything private.
 - **Claude.** Set `ANTHROPIC_API_KEY` (console.anthropic.com, pay per use).
 - If both keys are set, Gemini is used unless `AI_PROVIDER=claude`.
 
