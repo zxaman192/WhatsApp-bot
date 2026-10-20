@@ -28,6 +28,36 @@ async function post(payload) {
   }
 }
 
+/** Startup check: does the token work for this number, and is the business account subscribed to the app? */
+export async function checkWhatsApp() {
+  const { token, phoneNumberId, businessAccountId } = config.whatsapp;
+  if (!token || !phoneNumberId) return 'WhatsApp: token or phone number id not set.';
+  const get = async (path, method = 'GET') => {
+    const res = await fetch(`${graph()}/${path}`, { method, headers: { Authorization: `Bearer ${token}` }, signal: AbortSignal.timeout(15000) });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(`${path} (${res.status}): ${data.error?.message || 'unknown error'}`);
+    return data;
+  };
+  const lines = [];
+  try {
+    const n = await get(`${phoneNumberId}?fields=display_phone_number,verified_name,quality_rating`);
+    lines.push(`WhatsApp number OK: ${n.display_phone_number} (${n.verified_name || 'no name'})`);
+  } catch (e) {
+    return `WhatsApp check failed: ${e.message}`;
+  }
+  if (businessAccountId) {
+    try {
+      // Meta only sends a business account's messages to apps subscribed to it.
+      await get(`${businessAccountId}/subscribed_apps`, 'POST');
+      const apps = await get(`${businessAccountId}/subscribed_apps`);
+      lines.push(`WhatsApp account subscribed to: ${(apps.data || []).map((a) => a.whatsapp_business_api_data?.name || a.whatsapp_business_api_data?.id).join(', ') || 'nothing'}`);
+    } catch (e) {
+      lines.push(`WhatsApp subscription failed: ${e.message}`);
+    }
+  }
+  return lines.join('. ');
+}
+
 const clip = (s, n) => (s.length > n ? s.slice(0, n - 1) + '…' : s);
 
 export function sendText(to, body) {

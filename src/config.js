@@ -9,6 +9,8 @@ export const config = {
     phoneNumberId: env.WHATSAPP_PHONE_NUMBER_ID || '',
     verifyToken: env.WHATSAPP_VERIFY_TOKEN || '',
     appSecret: env.WHATSAPP_APP_SECRET || '',
+    // WhatsApp Business Account id: with it the server makes sure Meta delivers this account's messages to the app.
+    businessAccountId: env.WHATSAPP_BUSINESS_ACCOUNT_ID || '',
     graphVersion: env.GRAPH_API_VERSION || 'v21.0',
   },
   allowedNumbers: (env.ALLOWED_NUMBERS || '')

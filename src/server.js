@@ -6,6 +6,7 @@ import { config } from './config.js';
 import { initDb } from './db.js';
 import { handleMessage } from './bot.js';
 import { registerWebhook, toBotMessage, webhookInfo } from './telegram.js';
+import { checkWhatsApp } from './whatsapp.js';
 import { startScheduler, runDueDailies } from './scheduler.js';
 import { groqAvailable, checkGroq } from './ingest/groq.js';
 
@@ -75,6 +76,7 @@ app.post('/webhook', (req, res) => {
         if (seen.has(msg.id)) continue;
         seen.add(msg.id);
         if (seen.size > 5000) seen.delete(seen.values().next().value);
+        console.log(`WhatsApp update: ${msg.type} from …${String(msg.from).slice(-4)}`);
         handleMessage(msg).catch((e) => console.error('handleMessage failed', e));
       }
     }
@@ -122,4 +124,5 @@ if (config.telegram.token && config.publicUrl) {
     .then((i) => console.log(`Telegram webhook info: pending=${i.pending_update_count}${i.last_error_message ? `, last error: ${i.last_error_message}` : ''}`))
     .catch((e) => console.error('Telegram webhook registration failed:', e.message));
 }
+if (!config.dryRun) checkWhatsApp().then(console.log).catch((e) => console.error('WhatsApp check failed:', e.message));
 if (groqAvailable()) checkGroq().then(console.log).catch((e) => console.error('Groq key check failed:', e.message));
