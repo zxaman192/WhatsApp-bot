@@ -17,6 +17,7 @@ async function call(method, body) {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
+    signal: AbortSignal.timeout(20000),
   });
   const data = await res.json().catch(() => ({}));
   if (!data.ok) throw new Error(`Telegram ${method} failed (${res.status}): ${data.description || 'unknown error'}`);
@@ -105,6 +106,9 @@ export async function registerWebhook(publicUrl) {
     ],
   });
 }
+
+/** What Telegram reports about our webhook: pending updates and the last delivery error, if any. */
+export const webhookInfo = () => call('getWebhookInfo', {});
 
 /**
  * Turn a Telegram update into the same message shape the WhatsApp webhook gives us,

@@ -3,7 +3,7 @@ import { createHmac, timingSafeEqual } from 'node:crypto';
 import { config } from './config.js';
 import { initDb } from './db.js';
 import { handleMessage } from './bot.js';
-import { registerWebhook, toBotMessage } from './telegram.js';
+import { registerWebhook, toBotMessage, webhookInfo } from './telegram.js';
 import { startScheduler, runDueDailies } from './scheduler.js';
 
 const app = express();
@@ -49,10 +49,12 @@ app.post('/webhook', (req, res) => {
 // Telegram sends every update here.
 app.post('/telegram', (req, res) => {
   if (!config.telegram.token || req.get('x-telegram-bot-api-secret-token') !== config.telegram.webhookSecret) {
+    console.warn('Telegram update rejected: secret token did not match.');
     return res.sendStatus(401);
   }
   res.sendStatus(200);
   const msg = toBotMessage(req.body || {});
+  console.log(`Telegram update: ${msg ? `${msg.type} from ${msg.from}` : 'ignored'}`);
   if (!msg || seen.has(msg.id)) return;
   seen.add(msg.id);
   handleMessage(msg).catch((e) => console.error('handleMessage failed', e));
@@ -77,7 +79,10 @@ app.listen(config.port, () => {
   console.log(`NEET PG bot listening on :${config.port} (${config.dryRun ? 'DRY_RUN, not sending' : 'live'})`);
 });
 if (config.telegram.token && config.publicUrl) {
+  console.log(`Registering Telegram webhook at ${config.publicUrl}/telegram…`);
   registerWebhook(config.publicUrl)
     .then(() => console.log('Telegram webhook registered.'))
+    .then(() => webhookInfo())
+    .then((i) => console.log(`Telegram webhook info: pending=${i.pending_update_count}${i.last_error_message ? `, last error: ${i.last_error_message}` : ''}`))
     .catch((e) => console.error('Telegram webhook registration failed:', e.message));
 }

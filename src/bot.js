@@ -1116,7 +1116,7 @@ export async function handleMessage(msg, { download = (id) => wa.downloadMedia(m
     return await explain(phone, text);
   } catch (err) {
     console.error('Error handling message', err);
-    await wa.sendText(phone, `Sorry, something went wrong: ${err.message}`).catch(() => {});
+    await wa.sendText(phone, `Sorry, something went wrong: ${err.message}`).catch((e) => console.error('Could not send the error reply:', e.message));
   }
 }
 
