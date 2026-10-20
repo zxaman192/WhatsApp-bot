@@ -1053,7 +1053,7 @@ async function buddy(phone, user, rest) {
     if (!arg) return wa.sendText(phone, "Send *buddy add CODE* with your friend's code.");
     const other = await store.findUserByCode(arg);
     if (!other) return wa.sendText(phone, `No one has the code ${arg.toUpperCase()}. Ask your friend to send *buddy* to see theirs.`);
-    if (other.phone === phone) return wa.sendText(phone, "That's your own code. Share it with a friend; they send *buddy add* with it.");
+    if (other.phone === store.account(phone)) return wa.sendText(phone, "That's your own code. Share it with a friend; they send *buddy add* with it.");
     const group = other.buddy_group || `g${store.buddyCode(other.phone)}`;
     if (!other.buddy_group) await store.updateUser(other.phone, { buddy_group: group });
     await store.updateUser(phone, { buddy_group: group });
@@ -1074,7 +1074,7 @@ async function buddy(phone, user, rest) {
   ];
   if (user.buddy_group) {
     const members = await store.groupMembers(user.buddy_group);
-    lines.push('', '*Your group*', ...members.map((m) => `- ${displayName(m)}${m.phone === phone ? ' (you)' : ''}`), '', 'Send *buddy leave* to leave.');
+    lines.push('', '*Your group*', ...members.map((m) => `- ${displayName(m)}${m.phone === store.account(phone) ? ' (you)' : ''}`), '', 'Send *buddy leave* to leave.');
   }
   if (!user.name) lines.push('', 'Set the name your friends see: *name Harsh*.');
   return wa.sendText(phone, lines.join('\n'));
@@ -1087,7 +1087,7 @@ async function leaderboard(phone, user) {
   const medal = (i) => ['🥇', '🥈', '🥉'][i] || `${i + 1}.`;
   const lines = ['🏆 *Leaderboard* (last 7 days)', ''];
   rows.forEach((r, i) =>
-    lines.push(`${medal(i)} ${displayName(r)}${r.phone === phone ? ' (you)' : ''}: ${r.c} right of ${r.n} · ${r.days}/7 days · 🔥${r.streak}`)
+    lines.push(`${medal(i)} ${displayName(r)}${r.phone === store.account(phone) ? ' (you)' : ''}: ${r.c} right of ${r.n} · ${r.days}/7 days · 🔥${r.streak}`)
   );
   if (!user.buddy_group) lines.push('', 'Send *buddy* to add friends and compete.');
   return wa.sendText(phone, lines.join('\n'));
@@ -1336,7 +1336,7 @@ async function dbDeleteQuestion(phone, user, qid) {
  */
 export async function handleMessage(msg, opts = {}) {
   const later = [];
-  await background.run(later, () => withLock(msg.from, () => handle(msg, opts)));
+  await background.run(later, () => withLock(store.account(msg.from), () => handle(msg, opts)));
   await Promise.all(later);
 }
 

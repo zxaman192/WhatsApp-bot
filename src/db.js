@@ -178,7 +178,13 @@ export async function closeDb() {
 
 // ---------- users ----------
 
+// The same person on WhatsApp and Telegram can share one account (LINKED_ACCOUNTS=917…=tg:…), so progress,
+// stats and a running test follow them across apps. Replies still go to the app they wrote from.
+const links = new Map(config.linkedAccounts);
+export const account = (id) => links.get(String(id)) || String(id);
+
 export async function getUser(phone) {
+  phone = account(phone);
   await q('INSERT INTO users (phone, daily_time) VALUES ($1, $2) ON CONFLICT (phone) DO NOTHING', [
     phone,
     config.defaultDailyTime,
@@ -189,6 +195,7 @@ export async function getUser(phone) {
 const USER_COLS = new Set(['daily_enabled', 'daily_time', 'daily_subject', 'last_daily_date', 'last_inbound_at', 'state', 'name', 'exam_date', 'buddy_group', 'last_weekly_date']);
 
 export async function updateUser(phone, fields) {
+  phone = account(phone);
   const cols = Object.keys(fields).filter((c) => USER_COLS.has(c));
   if (!cols.length) return;
   const values = cols.map((c) => (c === 'state' ? JSON.stringify(fields[c]) : fields[c]));
@@ -198,7 +205,7 @@ export async function updateUser(phone, fields) {
   ]);
 }
 
-export const allUsers = () => q('SELECT * FROM users');
+export const allUsers = () => q('SELECT * FROM users WHERE NOT (phone = ANY($1))', [[...links.keys()]]);
 
 // ---------- sources / questions / notes ----------
 
@@ -258,6 +265,7 @@ export async function addNote(n) {
 
 /** Mark a date field (last_daily_date / last_weekly_date) as done today; false if it already was. */
 export async function claimDay(phone, field, date) {
+  phone = account(phone);
   if (!['last_daily_date', 'last_weekly_date'].includes(field)) throw new Error(`bad field ${field}`);
   const rows = await q(`UPDATE users SET ${field} = $2 WHERE phone = $1 AND ${field} IS DISTINCT FROM $2 RETURNING phone`, [phone, date]);
   return rows.length > 0;
@@ -295,6 +303,7 @@ export async function deleteSource(id) {
 
 /** Forget one person: their answers, review schedule and settings. Uploaded study material stays. */
 export async function deleteUserData(phone) {
+  phone = account(phone);
   const a = await q('DELETE FROM attempts WHERE phone = $1 RETURNING id', [phone]);
   await q('DELETE FROM reviews WHERE phone = $1', [phone]);
   await q('DELETE FROM users WHERE phone = $1', [phone]);
@@ -357,6 +366,7 @@ export function getQuestion(id) {
 }
 
 export async function recordAttempt(phone, questionId, chosen, correct, mode) {
+  phone = account(phone);
   await q('INSERT INTO attempts (phone, question_id, chosen, correct, mode) VALUES ($1, $2, $3, $4, $5)', [
     phone,
     questionId,
@@ -374,6 +384,7 @@ export async function recordAttempt(phone, questionId, chosen, correct, mode) {
  * Image ("spot") questions are asked separately.
  */
 export async function pickQuestions(phone, { count = 1, subject = null, topic = null, pyqOnly = false, year = null, wrongOnly = false, ids = null } = {}) {
+  phone = account(phone);
   const where = ["q.origin <> 'image'"];
   const params = [phone];
   if (ids) { params.push(ids); where.push(`q.id = ANY($${params.length}::int[])`); }
@@ -429,6 +440,7 @@ const REVIEW_GAPS = [1, 3, 7, 21];
 
 /** Update the review schedule after an answer. Returns the next due date, or null if it left the queue. */
 export async function scheduleReview(phone, questionId, correct) {
+  phone = account(phone);
   const today = localNow().date;
   const cur = await one('SELECT box FROM reviews WHERE phone = $1 AND question_id = $2', [phone, questionId]);
   if (!correct) {
@@ -452,6 +464,7 @@ export async function scheduleReview(phone, questionId, correct) {
 }
 
 export async function reviewCounts(phone) {
+  phone = account(phone);
   const today = localNow().date;
   return one(
     `SELECT COUNT(*) FILTER (WHERE due <= $2)::int AS due, COUNT(*)::int AS total FROM reviews WHERE phone = $1`,
@@ -478,6 +491,7 @@ export const notesSummary = () =>
   q('SELECT subject, COUNT(DISTINCT topic)::int AS topics, COUNT(*)::int AS sections FROM notes GROUP BY subject ORDER BY subject');
 
 export async function userStats(phone) {
+  phone = account(phone);
   const overall = await one(
     'SELECT COUNT(*)::int AS n, COUNT(*) FILTER (WHERE correct)::int AS c FROM attempts WHERE phone = $1',
     [phone]
@@ -597,6 +611,7 @@ export async function addImageQuestion({ subject, topic, answer, image, mime, so
 }
 
 export async function pickImageQuestion(phone, subject = null) {
+  phone = account(phone);
   return one(
     `SELECT q.id, q.subject, q.topic, q.options->>0 AS answer, q.image, q.image_mime,
             (SELECT MAX(a.created_at) FROM attempts a WHERE a.phone = $1 AND a.question_id = q.id) AS last_seen
@@ -644,6 +659,7 @@ export async function similarQuestions(question, limit = 5) {
 }
 
 export async function highYield(phone, subject = null) {
+  phone = account(phone);
   const pyq = await q(
     `SELECT q.subject, q.topic, COUNT(*)::int AS n, COUNT(DISTINCT NULLIF(q.year, ''))::int AS years,
             string_agg(DISTINCT NULLIF(q.year, ''), ', ' ORDER BY NULLIF(q.year, '')) AS year_list
@@ -668,6 +684,7 @@ export async function highYield(phone, subject = null) {
 }
 
 export async function subjectAccuracy(phone) {
+  phone = account(phone);
   const rows = await q(
     `SELECT q.subject, COUNT(*)::int AS n, COUNT(*) FILTER (WHERE a.correct)::int AS c
      FROM attempts a JOIN questions q ON q.id = a.question_id WHERE a.phone = $1 GROUP BY q.subject`,
@@ -679,6 +696,7 @@ export async function subjectAccuracy(phone) {
 // ---------- buddies / leaderboard ----------
 
 export function buddyCode(phone) {
+  phone = account(phone);
   return createHash('sha1').update('buddy:' + phone).digest('hex').slice(0, 6).toUpperCase();
 }
 
@@ -714,6 +732,7 @@ export async function weekBoard(phones) {
 
 /** Consecutive days (ending today or yesterday) with at least one answer. */
 export async function streak(phone) {
+  phone = account(phone);
   const rows = await q(
     `SELECT DISTINCT to_char((created_at AT TIME ZONE $2)::date, 'YYYY-MM-DD') AS d FROM attempts
      WHERE phone = $1 AND created_at >= now() - interval '400 days' ORDER BY d DESC`,
@@ -728,6 +747,7 @@ export async function streak(phone) {
 }
 
 export async function weekSummary(phone) {
+  phone = account(phone);
   const r = await one(
     `SELECT COUNT(*) FILTER (WHERE created_at >= now() - interval '7 days')::int AS n,
             COUNT(*) FILTER (WHERE created_at >= now() - interval '7 days' AND correct)::int AS c,

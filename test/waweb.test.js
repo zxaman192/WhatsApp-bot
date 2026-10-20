@@ -55,3 +55,8 @@ test('login keys are saved, replaced and removed in batches', async () => {
   await store.authClear();
   assert.deepEqual(await store.authGet(['creds']), {});
 });
+
+test('AI Markdown is turned into WhatsApp formatting', async () => {
+  const { polish } = await import('../src/format.js');
+  assert.equal(polish('## Heading\n- one\n**Bold**'), '*Heading*\n• one\n*Bold*');
+});

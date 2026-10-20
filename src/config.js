@@ -17,6 +17,11 @@ export const config = {
     // The bot's own number in web mode, with country code (e.g. 917991189108).
     webNumber: env.WHATSAPP_WEB_NUMBER || '',
   },
+  // Accounts that are one person: "917209339920=tg:5410698293" (WhatsApp number = Telegram id), comma separated.
+  linkedAccounts: (env.LINKED_ACCOUNTS || '')
+    .split(',')
+    .map((pair) => pair.split('=').map((s) => s.trim()))
+    .filter(([a, b]) => a && b),
   allowedNumbers: (env.ALLOWED_NUMBERS || '')
     .split(',')
     .map((n) => n.replace(/\D/g, ''))

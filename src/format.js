@@ -6,6 +6,10 @@ const CMD = new RegExp(`(^|[^\\w*\`])\\*((?:${COMMANDS})(?:[\\s:][^*\\n]{0,60})?
 
 export function polish(text) {
   return String(text ?? '')
+    // AI answers sometimes come back in Markdown; WhatsApp would show the raw # and ** marks.
+    .replace(/^\s*#{1,6}\s+(.+)$/gm, (_, h) => `*${h.replace(/\*/g, '')}*`)
+    .replace(/^(\s*)[-*]\s+/gm, '$1• ')
+    .replace(/\*\*(?=\S)([^*\n]+?)\*\*/g, '*$1*')
     .replace(CMD, '$1`$2`')
     .replace(/[ \t]+\n/g, '\n')
     .replace(/\n{3,}/g, '\n\n')
