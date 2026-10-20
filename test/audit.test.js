@@ -274,3 +274,11 @@ test('Llama on Groq answers when every Gemini model is out of quota', async () =
     resetResting();
   }
 });
+
+test('note references show the matching facts under a bold title', async () => {
+  const { noteLines } = await import('../src/bot.js');
+  const note = '*Laryngomalacia*\n• Most common congenital anomaly of the larynx\n• Inspiratory stridor, better on feeding\n• Omega-shaped epiglottis\n• Rx: wait and watch';
+  assert.equal(noteLines(note, 'omega shaped epiglottis', 2), '*Laryngomalacia*\n• Omega-shaped epiglottis');
+  const old = 'Tracheostomy: Trachea has 16-20 rings. Most common physiological complication is apnea.';
+  assert.equal(noteLines(old, 'physiological complication apnea', 2), '*Tracheostomy*\n• Most common physiological complication is apnea.');
+});

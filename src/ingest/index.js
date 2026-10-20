@@ -7,7 +7,10 @@ import { classify } from './keywords.js';
 import { imageBlock, pdfBlock, textBlock } from './claude.js';
 import { aiAvailable, extract, mediaAvailable, AiBusyError } from './ai.js';
 
-const PAGES_PER_CHUNK = 20;
+// Pages per AI call. Notes are dense: with many pages per call the AI summarises instead of keeping
+// every fact, so notes go 4 pages at a time. Question banks have less to write per page.
+const NOTE_PAGES = 4;
+const QBANK_PAGES = 10;
 const PARALLEL_PARTS = 3;
 const TEXT_CHUNK_CHARS = 40000;
 const IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'image/gif'];
@@ -206,12 +209,25 @@ export async function ingest({ buffer, mimeType, filename, caption = '', addedBy
     summary.errors.push(`Couldn't open this PDF: ${e.message}`);
     return summary;
   }
-  const parts = Math.ceil(total / PAGES_PER_CHUNK);
-  const jobId = await store.createJob({ phone: addedBy, filename, caption, data: buffer, sourceId, parts });
+  const chunk = await pagesPerPart(buffer, total);
+  const parts = Math.ceil(total / chunk);
+  const jobId = await store.createJob({ phone: addedBy, filename, caption, data: buffer, sourceId, parts, chunk });
   if (parts > 1) {
     await onProgress(`This PDF has ${total} pages. I'm reading it in ${parts} parts and saving questions as I go, so you can practise while it runs.`);
   }
   return runJob(jobId, { onProgress });
+}
+
+/** Question banks (lots of "A) … D)" options in the text layer) can go 10 pages per call; notes 4. */
+async function pagesPerPart(buffer) {
+  try {
+    const pages = await pdfPages(buffer);
+    const text = pages.join('\n');
+    const options = (text.match(/(^|\n)\s*\(?[a-dA-D][).]\s+\S/g) || []).length;
+    return options >= pages.length * 8 ? QBANK_PAGES : NOTE_PAGES;
+  } catch {
+    return NOTE_PAGES; // scanned: assume notes, the safer choice for coverage
+  }
 }
 
 const friendlyError = (e) =>
@@ -220,8 +236,8 @@ const friendlyError = (e) =>
 const running = new Set();
 
 /**
- * Read the remaining parts of a PDF upload job. Parts are PAGES_PER_CHUNK pages with one page of
- * overlap (questions cut at a boundary are skipped in one part and read whole in the next; duplicates
+ * Read the remaining parts of a PDF upload job, job.chunk pages each (questions cut at a boundary are
+ * skipped in one part and read whole in the next; duplicates
  * are dropped by hash). The first part runs alone so later parts reuse its topic names.
  */
 export async function runJob(jobId, { onProgress = async () => {} } = {}) {
@@ -243,10 +259,13 @@ export async function runJob(jobId, { onProgress = async () => {} } = {}) {
     await store.updateJob(jobId, { status: 'running' });
 
     let busy = null;
+    const size = job.chunk || 20;
     let nextMark = Math.floor((done.size / job.parts) * 4 + 1) / 4;
     const readPart = async (part) => {
-      const from = part * PAGES_PER_CHUNK + 1;
-      const to = Math.min(total, from + PAGES_PER_CHUNK); // one page of overlap with the next part
+      const from = part * size + 1;
+      // Question banks overlap by a page so a question cut at the boundary is read whole next time (exact
+      // duplicates are dropped by hash). Notes don't: the AI rewords them, so overlap would duplicate.
+      const to = Math.min(total, from + size - 1 + (size >= QBANK_PAGES ? 1 : 0));
       try {
         for (const r of await extractRange(src, from, to, { hint, answerKey, pages })) await save(r.result, r.offset);
         done.add(part);

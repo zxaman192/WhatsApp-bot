@@ -70,9 +70,14 @@ Turn it into database records:
 - explanation: 2-4 sentences, high-yield: why the answer is right, and the key fact that rules out the closest wrong option. Never invent numbers (doses, cut-offs, percentages) that are not in the source or standard references.
 - PYQs: a year or exam may be in a section heading that applies to every question below it, or in brackets after the stem ("(AIIMS May 2018)", "[NEET PG 21]", "PGI Dec 09"). Put the 4-digit year in year ("09" means "2009"), the exam in exam, set origin="pyq", and remove the tag from the stem. Otherwise origin="bank" and leave year and exam empty.
 
-2. Notes. If the material is study notes, split it into sections, one per topic, and store each as a note: a faithful, compact version of the content (keep numbers, drug names, classifications, mnemonics; drop filler). Then write 2-4 exam-style MCQs per topic, only on facts stated in those notes, with plausible distractors from the same category (e.g. four drugs of one class), origin="notes" and answer_given_in_source=false; the explanation quotes the fact from the notes.
+2. Notes. If the material is study notes (coaching notes, a textbook, slides, handwritten pages), coverage is the priority: the doctor wants every fact from every page in the database, not a summary.
+- Go page by page and keep everything examinable: every heading, bullet, table row, box, flowchart, diagram label, "most common", number, eponym, sign, classification and mnemonic. Do not merge pages, do not shorten lists, do not drop "minor" facts.
+- One note per sub-heading or box (a dense page usually gives 8 to 20 notes). Format each note's content as a bold title line, then one fact per line:
+  "*Laryngomalacia*\n• Most common congenital anomaly of the larynx\n• Inspiratory stridor, better on feeding and prone\n• Omega-shaped epiglottis\n• Rx: wait and watch; supraglottoplasty if severe"
+  Keep the source's own wording, numbers and abbreviations. Tables: one line per row ("• Type A: normal").
+- Then MCQs from the notes: at least 5 per page of notes and up to 10 on dense pages, each testing a different fact (one question per "most common", number, sign, drug of choice, eponym, investigation of choice or treatment). Vary the format: one-liners, clinical vignettes, "all except". Distractors come from the same category (four nerves, four signs, four drugs). origin="notes", answer_given_in_source=false. Explanation: 1-2 sentences quoting the fact from the notes.
 
-3. Sorting. File every question and note under exactly one of the subjects in the schema, and a topic that is a standard chapter-level heading for that subject (e.g. Pharmacology → "Autonomic Nervous System", Pathology → "Neoplasia", Community Medicine → "Epidemiology"). Reuse an existing topic name from the list you are given whenever one fits, so a chapter is not split into near-duplicates. Use title case; never use "General" if a real chapter fits.
+3. Sorting. File every question and note under exactly one of the subjects in the schema, and a topic that is a standard chapter-level heading for what that page is actually about (e.g. ENT → "Larynx", "Nose and Paranasal Sinuses", "Epistaxis", "Middle Ear", "Inner Ear", "Facial Nerve", "Pharynx"; Pharmacology → "Autonomic Nervous System"). Reuse an existing topic name from the list only when it is the same chapter; never file a page under a different chapter just because that name exists (nose content is never "External Ear"). Use title case; never "General" if a real chapter fits.
 
 4. Page. For PDFs, set page to the page number within this chunk (1 = first page you were given) where the question or note starts; use 0 for images and plain text. For recordings, set page to the minute where it is discussed.
 
@@ -88,7 +93,7 @@ export function extractInstructions(hint, existingTopics, { answerKey = '', lect
     hint && `The user's caption for this upload: "${hint}". If it names a subject, prefer that subject when it fits.`,
     answerKey && `Answer key found elsewhere in this file (question number → answer): ${answerKey}`,
     topicList ? `Topics already in the database:\n${topicList}` : 'The database is empty so far.',
-    'Extract everything in this chunk.',
+    'Extract everything in this chunk: every question, and for notes every fact on every page (see the coverage rules).',
   ]
     .filter(Boolean)
     .join('\n\n');

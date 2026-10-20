@@ -129,6 +129,7 @@ const SCHEMA = `
   CREATE INDEX IF NOT EXISTS idx_reviews_phone_due ON reviews(phone, due);
   CREATE INDEX IF NOT EXISTS idx_users_buddy_group ON users(buddy_group) WHERE buddy_group IS NOT NULL;
   CREATE INDEX IF NOT EXISTS idx_questions_origin ON questions(origin, subject);
+  ALTER TABLE upload_jobs ADD COLUMN IF NOT EXISTS chunk INT;
 `;
 
 /** Connect and create tables. url: Postgres URL, 'memory' for an in-memory PGlite, or a PGlite data dir. */
@@ -312,10 +313,10 @@ export async function dbTotals() {
 
 // ---------- upload jobs ----------
 
-export async function createJob({ phone, filename, caption, data, sourceId, parts }) {
+export async function createJob({ phone, filename, caption, data, sourceId, parts, chunk = 20 }) {
   const r = await one(
-    `INSERT INTO upload_jobs (phone, filename, caption, data, source_id, parts) VALUES ($1, $2, $3, $4, $5, $6) RETURNING id`,
-    [phone, filename, caption || '', data, sourceId, parts]
+    `INSERT INTO upload_jobs (phone, filename, caption, data, source_id, parts, chunk) VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id`,
+    [phone, filename, caption || '', data, sourceId, parts, chunk]
   );
   return r.id;
 }

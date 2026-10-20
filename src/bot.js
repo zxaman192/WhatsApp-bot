@@ -112,11 +112,32 @@ const where = (row) => {
   return `${row.subject} › ${row.topic}${loc ? ` (${loc})` : ''}`;
 };
 
+/** The lines of a note that best match a query: its bold title plus the most relevant facts, as bullets. */
+export function noteLines(content, query, max = 4) {
+  const terms = store.searchTerms(query);
+  let lines = String(content).split('\n').map((l) => l.trim()).filter(Boolean);
+  // Older notes are one run-on paragraph: use sentences instead of lines.
+  if (lines.length < 3) lines = String(content).split(/(?<=[.;])\s+(?=[A-Z0-9*•])/).map((l) => l.trim()).filter(Boolean);
+  let title = /^\*[^*]+\*:?$/.test(lines[0] || '') ? lines.shift() : null;
+  const lead = !title && (lines[0] || '').match(/^([^:.\n]{3,40}):\s*(.*)$/);
+  if (lead) {
+    title = `*${lead[1].trim()}*`;
+    lines[0] = lead[2];
+  }
+  const score = (l) => terms.filter((t) => l.toLowerCase().includes(t)).length;
+  const ranked = lines.map((l, i) => ({ l, i, s: score(l) })).filter((x) => x.s > 0);
+  const picked = (ranked.length ? ranked.sort((a, b) => b.s - a.s || a.i - b.i).slice(0, max) : lines.slice(0, max).map((l, i) => ({ l, i })))
+    .sort((a, b) => a.i - b.i)
+    .map((x) => clip(/^[•\-]/.test(x.l) ? x.l.replace(/^-\s*/, '• ') : `• ${x.l}`, 300));
+  return [title, ...picked].filter(Boolean).join('\n');
+}
+
 /** The best matching passage from the user's notes for a question, or null. */
 async function noteReference(q) {
-  const hits = await store.searchNotes(`${q.stem} ${q.options[q.answer]}`, { limit: 1, subject: q.subject });
-  const hit = hits[0] || (await store.searchNotes(`${q.stem} ${q.options[q.answer]}`, { limit: 1 }))[0];
-  return hit ? `📖 *From your notes* · _${where(hit)}_\n${quote(hit.snippet)}` : null;
+  const query = `${q.stem} ${q.options[q.answer]}`;
+  const hits = await store.searchNotes(query, { limit: 1, subject: q.subject });
+  const hit = hits[0] || (await store.searchNotes(query, { limit: 1 }))[0];
+  return hit ? `📖 *From your notes* · _${where(hit)}_\n${quote(noteLines(hit.content, `${q.options[q.answer]} ${q.stem}`, 3))}` : null;
 }
 
 function inWindow(user) {
@@ -374,7 +395,7 @@ async function explain(phone, user, query) {
     await store.updateUser(phone, { state: { ...user.state, related: qs.slice(0, 50).map((h) => h.id) } });
     return sendWithButtons(phone, `${text}\n\n📝 ${plural(qs.length, 'related question')} in your bank.`, [{ id: 'reltest', title: '📝 Practise these' }], 'Practise them?');
   };
-  const snippets = () => notes.map((n, i) => `📖 *[${i + 1}] ${where(n)}*\n${quote(n.snippet)}`).join('\n\n');
+  const snippets = () => notes.map((n, i) => `📖 *[${i + 1}] ${where(n)}*\n${quote(noteLines(n.content, query))}`).join('\n\n');
 
   if (!aiAvailable()) {
     if (!notes.length) return finish(`Nothing about "${clip(query, 60)}" in your notes yet.`);
@@ -441,7 +462,7 @@ async function why(phone, user, qid = user.state.lastQid) {
   const offline = () => {
     const lines = [`✅ *${LETTERS[q.answer]}. ${q.options[q.answer]}*`];
     if (q.explanation) lines.push('', `💡 ${q.explanation.trim()}`);
-    if (notes.length) lines.push('', ...notes.slice(0, 2).map((n, i) => `📖 *[${i + 1}] ${where(n)}*\n${quote(n.snippet)}`));
+    if (notes.length) lines.push('', ...notes.slice(0, 2).map((n, i) => `📖 *[${i + 1}] ${where(n)}*\n${quote(noteLines(n.content, query, 3))}`));
     if (!q.explanation && !notes.length) lines.push('', 'No explanation stored and nothing on it in your notes yet.');
     return lines.join('\n');
   };
