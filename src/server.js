@@ -7,6 +7,7 @@ import { initDb } from './db.js';
 import { handleMessage } from './bot.js';
 import { registerWebhook, toBotMessage, webhookInfo } from './telegram.js';
 import { startScheduler, runDueDailies } from './scheduler.js';
+import { groqAvailable, checkGroq } from './ingest/groq.js';
 
 // Node tries IPv6 and IPv4 with a 250 ms connect timeout each; on Render that made calls to
 // api.telegram.org fail with ETIMEDOUT. Prefer IPv4 and give each attempt longer.
@@ -98,3 +99,4 @@ if (config.telegram.token && config.publicUrl) {
     .then((i) => console.log(`Telegram webhook info: pending=${i.pending_update_count}${i.last_error_message ? `, last error: ${i.last_error_message}` : ''}`))
     .catch((e) => console.error('Telegram webhook registration failed:', e.message));
 }
+if (groqAvailable()) checkGroq().then(console.log).catch((e) => console.error('Groq key check failed:', e.message));

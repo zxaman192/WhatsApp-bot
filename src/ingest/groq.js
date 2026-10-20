@@ -103,6 +103,16 @@ export async function transcribeWithGroq(buffer, mimeType) {
   return String(data.text || '').trim();
 }
 
+/** Startup check: is the key valid, and which Llama models does Groq offer right now? */
+export async function checkGroq() {
+  const res = await fetch(`${BASE}/models`, { headers: { Authorization: `Bearer ${config.groq.apiKey}` }, signal: AbortSignal.timeout(15000) });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) return `Groq key check failed (${res.status}): ${data.error?.message || 'unknown'}`;
+  const llama = (data.data || []).map((m) => m.id).filter((id) => /llama/i.test(id));
+  const usable = MODELS().filter((m) => llama.includes(m));
+  return `Groq key OK. Llama models: ${llama.join(', ') || 'none'}. Will use: ${usable.join(' → ') || 'none of the configured ones; set GROQ_MODEL'}`;
+}
+
 /** For tests. */
 export function resetGroq() {
   restingUntil = 0;
