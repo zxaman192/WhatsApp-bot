@@ -121,12 +121,12 @@ test('note reference after answering cites file and page', async () => {
   await store.updateUser(ME, { state: { ...user.state, current: { qid, mode: 'single' } } });
   await say('b');
   assert.match(lastText(), /You chose B/);
-  assert.match(lastText(), /Your notes:\* Pharmacology › Antiepileptics \(p\.12\)/);
+  assert.match(lastText(), /From your notes\* · _Pharmacology › Antiepileptics \(p\.12\)_/);
 });
 
 test('full test flow with typed answers and a summary', async () => {
   await say('test pharma 3');
-  assert.match(out[0].text.body, /Test: Pharmacology/);
+  assert.match(out[0].text.body, /Test · Pharmacology/);
   for (let i = 0; i < 3; i++) await say('A');
   assert.match(lastText(), /Test finished/);
   assert.match(lastText(), /Score: \*\d\/3\*/);

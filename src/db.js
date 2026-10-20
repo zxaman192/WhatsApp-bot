@@ -256,6 +256,60 @@ export async function claimDay(phone, field, date) {
   return rows.length > 0;
 }
 
+// ---------- managing the database ----------
+
+/** Uploaded files, newest first, with how many questions and notes each one added. */
+export const listSources = (limit = 10, offset = 0) =>
+  q(
+    `SELECT s.id, s.filename, s.kind, s.created_at,
+            (SELECT COUNT(*)::int FROM questions WHERE source_id = s.id) AS questions,
+            (SELECT COUNT(*)::int FROM notes WHERE source_id = s.id) AS notes
+     FROM sources s ORDER BY s.id DESC LIMIT $1 OFFSET $2`,
+    [limit, offset]
+  );
+
+export const getSource = (id) =>
+  one(
+    `SELECT s.id, s.filename, s.kind, s.created_at,
+            (SELECT COUNT(*)::int FROM questions WHERE source_id = s.id) AS questions,
+            (SELECT COUNT(*)::int FROM notes WHERE source_id = s.id) AS notes
+     FROM sources s WHERE s.id = $1`,
+    [id]
+  );
+
+/** Delete an uploaded file and everything it added (answers and reviews of its questions go too). */
+export async function deleteSource(id) {
+  const qs = await q('DELETE FROM questions WHERE source_id = $1 RETURNING id', [id]);
+  const ns = await q('DELETE FROM notes WHERE source_id = $1 RETURNING id', [id]);
+  await q(`UPDATE upload_jobs SET status = 'failed', data = NULL WHERE source_id = $1 AND status IN ('running', 'paused')`, [id]);
+  await q('DELETE FROM sources WHERE id = $1', [id]);
+  return { questions: qs.length, notes: ns.length };
+}
+
+export async function deleteQuestion(id) {
+  return (await q('DELETE FROM questions WHERE id = $1 RETURNING id', [id])).length > 0;
+}
+
+/** Correct a question's answer key; it now counts as checked. */
+export async function setAnswer(id, index) {
+  return (await q('UPDATE questions SET answer = $2, answer_checked = true WHERE id = $1 RETURNING id', [id, index])).length > 0;
+}
+
+/** Uploads still being read or waiting for the AI quota. */
+export const activeJobs = () =>
+  q(`SELECT id, filename, status, parts, done_parts, resume_at FROM upload_jobs WHERE status IN ('running', 'paused') ORDER BY id`);
+
+export async function dbTotals() {
+  return one(
+    `SELECT (SELECT COUNT(*)::int FROM questions WHERE origin <> 'image') AS questions,
+            (SELECT COUNT(*)::int FROM questions WHERE origin = 'pyq') AS pyq,
+            (SELECT COUNT(*)::int FROM questions WHERE origin = 'image') AS images,
+            (SELECT COUNT(*)::int FROM questions WHERE NOT answer_checked) AS unchecked,
+            (SELECT COUNT(*)::int FROM notes) AS notes,
+            (SELECT COUNT(*)::int FROM sources) AS files`
+  );
+}
+
 // ---------- upload jobs ----------
 
 export async function createJob({ phone, filename, caption, data, sourceId, parts }) {

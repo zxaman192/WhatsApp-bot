@@ -108,3 +108,9 @@ export async function downloadMedia(mediaId) {
   if (!file.ok) throw new Error(`Media download failed (${file.status})`);
   return { buffer: Buffer.from(await file.arrayBuffer()), mimeType };
 }
+
+/** A menu: up to 3 choices as buttons, more as a list (WhatsApp lists hold 10 rows). */
+export function sendMenu(to, body, buttons, _columns, label = 'Menu') {
+  if (buttons.length <= 3) return sendButtons(to, body, buttons);
+  return sendList(to, body, label, buttons.slice(0, 10), 'Choose one');
+}

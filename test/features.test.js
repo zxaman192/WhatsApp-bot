@@ -123,7 +123,7 @@ test('spaced repetition: a wrong answer comes back tomorrow, then after 3, 7 and
   await store.updateUser(ME, { state: { ...u.state, current: { qid: q.id, mode: 'single' } } });
   await tap(`ans:${q.id}:0`);
   assert.match(lastText(), /You chose A/);
-  assert.match(lastText(), /bring this one back on/);
+  assert.match(lastText(), /Back for review on/);
   const today = localNow().date;
   const row = async () => (await store.reviewCounts(ME));
   assert.deepEqual(await row(), { due: 0, total: 1 });
@@ -268,11 +268,11 @@ test('coach finds weak topics and drills them', async () => {
   out = [];
   await say('coach');
   assert.match(lastText(), /Your coach/);
-  assert.match(lastText(), /Pharmacology › Antiepileptics/);
+  assert.match(lastText(), /\*Antiepileptics\* · _Pharmacology_/);
   const row = out.at(-1).interactive.action.sections[0].rows.find((r) => r.title === 'Antiepileptics');
   out = [];
   await tap(row.id);
-  assert.match(out[0].text.body, /Test: Pharmacology · "Antiepileptics"/);
+  assert.match(out[0].text.body, /Test · Pharmacology · "Antiepileptics"/);
   await say('stop');
 });
 
@@ -301,7 +301,7 @@ test('similar questions and practising them', async () => {
   assert.match(lastText(), /absence seizures/i);
   out = [];
   await tap('simtest');
-  assert.match(out[0].text.body, /Test: Similar questions/);
+  assert.match(out[0].text.body, /Test · Similar questions/);
   await say('stop');
 });
 
@@ -378,6 +378,6 @@ test('weekly report goes out on Sunday, once', async () => {
   await say('report');
   assert.match(lastText(), /Your week/);
   await say('stats');
-  assert.match(lastText(), /streak/);
-  assert.match(lastText(), /in your review queue/);
+  assert.match(lastText(), /[Ss]treak/);
+  assert.match(lastText(), /in queue/);
 });

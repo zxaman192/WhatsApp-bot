@@ -34,29 +34,89 @@ async function call(method, body, tries = 3) {
 
 const clip = (s, n) => (s.length > n ? s.slice(0, n - 1) + '…' : s);
 
+const escapeHtml = (s) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+
+/**
+ * The bot writes WhatsApp-style formatting (*bold*, _italic_, ```code```, "> " quotes). Telegram's
+ * Markdown breaks on a stray _ or * (file names, snake_case), so convert to Telegram HTML instead.
+ */
+export function toTelegramHtml(text) {
+  const lines = escapeHtml(text).split('\n');
+  const out = [];
+  let quote = [];
+  const flush = () => {
+    if (quote.length) out.push(`<blockquote>${quote.join('\n')}</blockquote>`);
+    quote = [];
+  };
+  for (const line of lines) {
+    const m = line.match(/^&gt;\s?(.*)$/);
+    if (m) quote.push(m[1]);
+    else { flush(); out.push(line); }
+  }
+  flush();
+  return out
+    .join('\n')
+    .replace(/```([\s\S]+?)```/g, '<pre>$1</pre>')
+    .replace(/`([^`\n]+)`/g, '<code>$1</code>')
+    .replace(/(^|[^\w*])\*(?=\S)([^*\n]*?\S)\*(?![\w*])/g, '$1<b>$2</b>')
+    .replace(/(^|[^\w])_(?=\S)([^_\n]*?\S)_(?!\w)/g, '$1<i>$2</i>')
+    .replace(/(^|[^\w~])~(?=\S)([^~\n]*?\S)~(?![\w~])/g, '$1<s>$2</s>');
+}
+
+const plain = (text) => text.replace(/(^|\s)[*_~](?=\S)|(?<=\S)[*_~](?=\s|$|[.,:;!?)])/gm, '$1').replace(/^>\s?/gm, '');
+
 async function send(to, text, keyboard) {
+  const body = clip(text, 3900);
   const payload = {
     chat_id: chatId(to),
-    text: clip(text, 4096),
-    parse_mode: 'Markdown',
-    disable_web_page_preview: true,
+    text: toTelegramHtml(body),
+    parse_mode: 'HTML',
+    link_preview_options: { is_disabled: true },
     ...(keyboard ? { reply_markup: { inline_keyboard: keyboard } } : {}),
   };
-  if (config.telegram.dryRun) return sink(to, { type: 'telegram', ...payload });
+  if (config.telegram.dryRun) return sink(to, { type: 'telegram', ...payload, raw: body });
   try {
     await call('sendMessage', payload);
   } catch (e) {
-    // WhatsApp-style *bold* is valid Telegram Markdown, but a stray _ or [ (e.g. in a file name) breaks parsing.
-    if (!/parse entities/i.test(e.message)) throw e;
+    // Should not happen with escaped HTML, but never lose a message over formatting.
+    if (!/parse entities|can't parse/i.test(e.message)) throw e;
     delete payload.parse_mode;
+    payload.text = plain(body);
     await call('sendMessage', payload);
   }
 }
 
 export const sendText = (to, body) => send(to, body);
 
+// The always-visible keyboard under the chat box. Its buttons just send their text ("📝 Question").
+const REPLY_KEYBOARD = {
+  keyboard: [
+    [{ text: '🏠 Menu' }, { text: '📝 Question' }, { text: '🧪 Test' }],
+    [{ text: '🔁 Revise' }, { text: '📊 Stats' }, { text: '🗂 Database' }],
+  ],
+  resize_keyboard: true,
+  is_persistent: true,
+  input_field_placeholder: 'Ask anything or pick an option',
+};
+
+/** A message that also installs the keyboard under the chat box. */
+export async function sendWithKeyboard(to, body) {
+  const payload = { chat_id: chatId(to), text: toTelegramHtml(clip(body, 3900)), parse_mode: 'HTML', reply_markup: REPLY_KEYBOARD };
+  if (config.telegram.dryRun) return sink(to, { type: 'telegram', ...payload, raw: body });
+  return call('sendMessage', payload);
+}
+
 export const sendButtons = (to, body, buttons) =>
   send(to, body, [buttons.map((b) => ({ text: b.title, callback_data: b.id }))]);
+
+/** A grid of buttons, `columns` per row. */
+export function sendMenu(to, body, buttons, columns = 2) {
+  const keyboard = [];
+  for (let i = 0; i < buttons.length; i += columns) {
+    keyboard.push(buttons.slice(i, i + columns).map((b) => ({ text: clip(b.title, 40), callback_data: b.id })));
+  }
+  return send(to, body, keyboard);
+}
 
 export function sendList(to, body, _label, rows) {
   // Short labels (A–D answer buttons) go on one row; longer ones get a row each.
@@ -71,7 +131,8 @@ export async function sendImage(to, buffer, mimeType, caption = '') {
   if (config.telegram.dryRun) return sink(to, { type: 'telegram-photo', chat_id: chatId(to), bytes: buffer.length, caption });
   const form = new FormData();
   form.append('chat_id', chatId(to));
-  form.append('caption', clip(caption, 1024));
+  form.append('caption', toTelegramHtml(clip(caption, 900)));
+  form.append('parse_mode', 'HTML');
   form.append('photo', new Blob([buffer], { type: mimeType }), 'image');
   const res = await fetch(api('sendPhoto'), { method: 'POST', body: form, signal: AbortSignal.timeout(60000) });
   const data = await res.json().catch(() => ({}));

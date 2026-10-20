@@ -17,8 +17,19 @@ export const aiAvailable = () => provider() !== null;
 
 export const extract = (blocks, opts) => (provider() === 'gemini' ? extractWithGemini(blocks, opts) : extractWithClaude(blocks, opts));
 
-export const explain = (question, excerpts, opts) =>
-  provider() === 'gemini' ? explainWithGemini(question, excerpts, opts) : explainFromNotes(question, excerpts, opts);
+export const explain = async (question, excerpts, opts) =>
+  tidy(await (provider() === 'gemini' ? explainWithGemini(question, excerpts, opts) : explainFromNotes(question, excerpts, opts)));
+
+/** Models slip into Markdown; turn it into chat formatting (*bold*, • bullets) and drop stray blank lines. */
+export function tidy(text) {
+  return String(text)
+    .replace(/\*\*(.+?)\*\*/g, '*$1*')
+    .replace(/__(.+?)__/g, '_$1_')
+    .replace(/^#{1,6}\s*(.+)$/gm, '*$1*')
+    .replace(/^\s*[-*]\s+/gm, '• ')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+}
 
 /** Why the keyed answer of a question is right and the others wrong, citing the notes. */
 export const explainQuestion = (q, excerpts) => explain(whyPrompt(q), excerpts, { system: WHY_SYSTEM });

@@ -11,44 +11,43 @@ import { localNow, addDays, daysBetween } from './time.js';
 
 const LETTERS = ['A', 'B', 'C', 'D'];
 
-const HELP = `*NEET PG prep bot* 📚
+const HELP = `📚 *NEET PG Study Bot*
+_Your notes, question banks and PYQs in one place._
 
-*Add material*
-Send a PDF, a photo of a page, or paste text (here or in the Telegram bot; both share one database): notes, a question bank or PYQs. I file each question and note under its subject and topic. A caption like "pharma" helps.
-- Photo with caption *spot: <answer>*: saves an image question
-- A YouTube link or a lecture recording: notes and MCQs from it
-- A voice note: ask anything by voice
+📥 *Add material*
+• Send a *PDF*, a *photo* of a page, or *paste text*: notes, Q-banks, PYQs. I sort everything by subject and topic (a caption like "pharma" helps).
+• Photo with caption *spot: answer* → an image question
+• *YouTube link* or *lecture recording* → notes and MCQs
+• *Voice note* → ask anything by voice
 
-*Practise*
-- *q*: one question now (*q pharma* for one subject)
-- *test*, *test pharma 20*, *test pyq 2022*, *test 10 thyroid*
-- *grand*: timed mock like the real paper, +4/−1 (200, 100 or 50 questions)
-- *revise*: questions due for review; *due* shows how many
-- *spot*: an image question
-- *flash* / *flash pharma*: flashcards from your notes
-- *similar*: questions like the last one
-- *stop*: end a test
+📝 *Practise*
+• *q* · one question (*q pharma*)
+• *test* · *test pharma 20* · *test pyq 2022* · *test thyroid*
+• *grand* · timed mock, +4/−1
+• *revise* · questions due for review
+• *spot* · image question   • *flash* · flashcards
+• *similar* · more like the last one   • *stop* · end a test
 
-*Learn from your notes*
-- *explain <topic>* or just ask, e.g. "DOC for absence seizures?"
-- *where <topic>*: where it appears in your notes and questions
-- *why*: explain the last question from your notes
-- *hy* / *hy pharma*: high-yield topics from your PYQs
+🧠 *Learn*
+• Just ask: _"DOC for absence seizures?"_
+• *explain* topic · *where* topic · *why* (last question)
+• *hy* · high-yield topics from your PYQs
 
-*Plan and track*
-- *exam 15-01-2027*: set your exam date; then *plan* and *today*
-- *coach*: your weakest topics, with drills
-- *bank*, *stats*, *report*
-- *daily 07:30*, *daily off*, *daily pharma*
-- *name Harsh*, *buddy*, *lb*: study with friends`;
+📆 *Plan and track*
+• *exam 15-01-2027* → *plan* · *today*
+• *coach* · *stats* · *bank* · *report*
+• *daily 07:30* · *daily off* · *daily pharma*
+• *buddy* · *lb* · *name Harsh*`;
 
 // ---------- helpers ----------
 
 function questionCard(q, header) {
   const tags = [q.subject, q.topic !== 'General' ? q.topic : null].filter(Boolean).join(' › ');
-  const pyq = q.origin === 'pyq' ? ` · PYQ${q.year ? ' ' + q.year : ''}${q.exam && q.exam !== 'NEET PG' ? ' ' + q.exam : ''}` : '';
-  const opts = q.options.map((o, i) => `*${LETTERS[i]}.* ${o}`).join('\n');
-  return `${header ? `*${header}* · ` : ''}_${tags}${pyq}_\n\n${q.stem}\n\n${opts}\n\nTap an option or reply A, B, C or D.`;
+  const pyq = q.origin === 'pyq' ? ` · 🏷 PYQ${q.year ? ' ' + q.year : ''}${q.exam && q.exam !== 'NEET PG' ? ' ' + q.exam : ''}` : '';
+  const opts = q.options.map((o, i) => `*${LETTERS[i]}.*  ${o}`).join('\n');
+  return [header ? `🩺 *${header}*` : null, `📘 _${tags}_${pyq}`, '', `*${q.stem.trim()}*`, '', opts, '', '_Tap an option or reply A–D._']
+    .filter((l) => l !== null)
+    .join('\n');
 }
 
 async function sendQuestion(phone, q, header, { skip = false } = {}) {
@@ -100,6 +99,13 @@ const restingLine = (e) =>
     ? `_The AI has used up its free quota for now${e.resetAt ? ` (back ${whenText(e.resetAt)})` : ''}, so here is what your notes say._`
     : '_The AI could not answer just now, so here is what your notes say._';
 const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
+/** ▰▰▰▰▰▰▱▱▱▱ for a percentage. */
+const bar = (p, len = 10) => {
+  const full = Math.max(0, Math.min(len, Math.round((p / 100) * len)));
+  return '▰'.repeat(full) + '▱'.repeat(len - full);
+};
+const quote = (text) => String(text).trim().split('\n').map((l) => `> ${l}`).join('\n');
+const grade = (p) => (p >= 80 ? '🌟 Excellent!' : p >= 65 ? '👏 Well done!' : p >= 50 ? '💪 Good effort, keep going.' : '📖 Worth revising these topics.');
 
 const where = (row) => {
   const loc = [row.filename, row.page ? `p.${row.page}` : null].filter(Boolean).join(' ');
@@ -110,7 +116,7 @@ const where = (row) => {
 async function noteReference(q) {
   const hits = await store.searchNotes(`${q.stem} ${q.options[q.answer]}`, { limit: 1, subject: q.subject });
   const hit = hits[0] || (await store.searchNotes(`${q.stem} ${q.options[q.answer]}`, { limit: 1 }))[0];
-  return hit ? `📖 *Your notes:* ${where(hit)}\n${hit.snippet}` : null;
+  return hit ? `📖 *From your notes* · _${where(hit)}_\n${quote(hit.snippet)}` : null;
 }
 
 function inWindow(user) {
@@ -173,21 +179,24 @@ async function startTest(phone, user, opts) {
   const test = { ids, index: 0, correct: 0, wrong: [], label: opts.label || label || 'Mixed', perTopic: {} };
   await store.updateUser(phone, { state: { ...user.state, test, current: { qid: ids[0], mode: 'test' } } });
   const note = ids.length < count ? ` (only ${ids.length} available)` : '';
-  await wa.sendText(phone, `📝 *Test: ${test.label}*, ${ids.length} questions${note}. Send *stop* any time to finish early.`);
+  await wa.sendText(phone, `📝 *Test · ${test.label}*\n${plural(ids.length, 'question')}${note} · send *stop* any time to finish early. Good luck! 🍀`);
   await sendQuestion(phone, await store.getQuestion(ids[0]), `Q 1/${ids.length}`);
 }
 
 async function finishTest(phone, user, test) {
   const answered = test.index;
-  const lines = [`🏁 *Test finished: ${test.label}*`, `Score: *${test.correct}/${answered}*${answered ? ` (${Math.round((100 * test.correct) / answered)}%)` : ''}`];
+  const p = pct(test.correct, answered);
+  const lines = [`🏁 *Test finished* · ${test.label}`, ''];
+  if (answered) lines.push(`🎯 Score: *${test.correct}/${answered}* (${p}%)`, bar(p), grade(p));
+  else lines.push('No questions answered.');
   const topics = Object.entries(test.perTopic).sort((a, b) => a[1].c / a[1].n - b[1].c / b[1].n);
   if (topics.length > 1) {
-    lines.push('', '*By topic*');
-    for (const [t, v] of topics) lines.push(`- ${t}: ${v.c}/${v.n}`);
+    lines.push('', '📊 *By topic*');
+    for (const [t, v] of topics) lines.push(`${bar(pct(v.c, v.n), 5)} ${t} · ${v.c}/${v.n}`);
   }
   if (test.wrong.length) {
-    lines.push('', '*Review these*');
-    for (const w of test.wrong.slice(0, 15)) lines.push(`- ${w}`);
+    lines.push('', '❌ *Review these*');
+    for (const w of test.wrong.slice(0, 15)) lines.push(`• ${w}`);
   }
   await store.updateUser(phone, { state: { ...user.state, test: null, current: null } });
   const buttons = test.wrong.length
@@ -207,20 +216,24 @@ async function handleAnswer(phone, user, qid, chosen) {
     return finishGrand(phone, user, user.state.test, true);
   }
   const q = await store.getQuestion(qid);
+  if (!q || !(chosen >= 0 && chosen < q.options.length)) {
+    await store.updateUser(phone, { state: { ...user.state, current: null } });
+    return wa.sendButtons(phone, 'That question is no longer in your database.', [{ id: 'next', title: '➡️ Next' }]);
+  }
   const correct = chosen === q.answer;
   await store.recordAttempt(phone, qid, chosen, correct, cur.mode);
   const due = await store.scheduleReview(phone, qid, correct);
   if (cur.mode === 'grand' && user.state.test?.grand) return grandStep(phone, user, q, correct ? 'c' : 'w');
 
-  const lines = [
-    correct ? `✅ *Correct!* ${LETTERS[q.answer]}. ${q.options[q.answer]}` : `❌ You chose ${LETTERS[chosen]}. Correct answer: *${LETTERS[q.answer]}. ${q.options[q.answer]}*`,
-  ];
-  if (q.explanation) lines.push('', q.explanation);
-  if (!q.answer_checked) lines.push('', '_The source had no answer key; this answer was worked out by AI, so double-check it._');
+  const lines = correct
+    ? ['✅ *Correct!*', quote(`*${LETTERS[q.answer]}. ${q.options[q.answer]}*`)]
+    : [`❌ *Not quite.* You chose ${LETTERS[chosen]}. ${q.options[chosen] ?? ''}`, '', '*Correct answer*', quote(`*${LETTERS[q.answer]}. ${q.options[q.answer]}*`)];
+  if (q.explanation) lines.push('', `💡 ${q.explanation.trim()}`);
+  if (!q.answer_checked) lines.push('', '⚠️ _No answer key in the source; the AI worked this one out, so double-check it._');
   const ref = await noteReference(q);
   if (ref) lines.push('', ref);
-  else if (q.filename) lines.push('', `📄 From ${q.filename}${q.page ? ` p.${q.page}` : ''}`);
-  if (!correct && due) lines.push('', `🔁 I'll bring this one back on ${shortDate(due)}.`);
+  else if (q.filename) lines.push('', `📄 _From ${q.filename}${q.page ? `, p.${q.page}` : ''}_`);
+  if (!correct && due) lines.push('', `🔁 _Back for review on ${shortDate(due)}._`);
 
   const state = { ...user.state, lastQid: qid, current: null };
   const test = state.test;
@@ -282,6 +295,15 @@ async function startGrand(phone, user, n) {
   return sendGrandQuestion(phone, test);
 }
 
+async function grandChooser(phone, user) {
+  if (await testRunning(phone, user)) return;
+  return wa.sendButtons(phone, '🏆 *Grand mock*\nTimed like the real paper (1.05 min per question), +4 right / −1 wrong, answers at the end.\n\nHow long?', [
+    { id: 'gstart:200', title: '200 Q · 3.5 h' },
+    { id: 'gstart:100', title: '100 Q · 1h 45m' },
+    { id: 'gstart:50', title: '50 Q · 53 min' },
+  ]);
+}
+
 async function sendGrandQuestion(phone, test) {
   const q = await store.getQuestion(test.ids[test.index]);
   await sendQuestion(phone, q, `Q ${test.index + 1}/${test.ids.length} · ⏱ ${timeLeft(test.endsAt - Date.now())} left`, { skip: true });
@@ -311,18 +333,21 @@ async function finishGrand(phone, user, test, timeUp = false) {
   const attempted = test.correct + test.wrongN;
   const notReached = test.ids.length - test.index;
   const used = Math.min(Date.now(), test.endsAt) - test.startedAt;
+  const max = 4 * test.ids.length;
   const lines = [
     timeUp ? "⏰ *Time's up!*" : null,
     `🏁 *Grand test finished*`,
-    `Marks: *${marks}/${4 * test.ids.length}*`,
+    '',
+    `🎯 Marks: *${marks}/${max}*`,
+    bar(pct(Math.max(0, marks), max)),
     `✅ ${test.correct} right · ❌ ${test.wrongN} wrong · ⏭ ${test.skipped} skipped${notReached ? ` · ${notReached} not reached` : ''}`,
-    attempted ? `Accuracy: ${pct(test.correct, attempted)}% of attempted` : null,
-    `Time: ${timeLeft(used)} of ${timeLeft(test.minutes * 60000)}`,
-  ].filter(Boolean);
+    attempted ? `🎯 Accuracy: ${pct(test.correct, attempted)}% of attempted` : null,
+    `⏱ Time: ${timeLeft(used)} of ${timeLeft(test.minutes * 60000)}`,
+  ].filter((l) => l !== null);
   const subjects = Object.entries(test.perSubject).sort((a, b) => a[1].c / a[1].n - b[1].c / b[1].n);
   if (subjects.length > 1) {
-    lines.push('', '*By subject* (weakest first)');
-    for (const [s, v] of subjects) lines.push(`- ${s}: ${4 * v.c - v.w} marks (${v.c}/${v.n})`);
+    lines.push('', '📊 *By subject* (weakest first)');
+    for (const [s, v] of subjects) lines.push(`${bar(pct(v.c, v.n), 5)} ${s} · ${4 * v.c - v.w} marks (${v.c}/${v.n})`);
   }
   if (test.wrongN) lines.push('', 'Every question you got wrong is now in your review queue.');
   await store.updateUser(phone, { state: { ...user.state, test: null, current: null } });
@@ -343,17 +368,17 @@ async function explain(phone, user, query) {
   let notes = await store.searchNotes(query, { limit: 5, subject });
   if (!notes.length && subject) notes = await store.searchNotes(query, { limit: 5 });
   const qs = await store.searchQuestions(query, { limit: 300 });
-  const sources = notes.length ? `\n\n📚 *Sources*\n${notes.map((n, i) => `[${i + 1}] ${where(n)}`).join('\n')}` : '';
+  const sources = notes.length ? `\n\n📚 *Sources*\n${notes.map((n, i) => `_[${i + 1}] ${where(n)}_`).join('\n')}` : '';
   const finish = async (text) => {
     if (!qs.length) return wa.sendText(phone, text);
     await store.updateUser(phone, { state: { ...user.state, related: qs.slice(0, 50).map((h) => h.id) } });
     return sendWithButtons(phone, `${text}\n\n📝 ${plural(qs.length, 'related question')} in your bank.`, [{ id: 'reltest', title: '📝 Practise these' }], 'Practise them?');
   };
-  const snippets = () => notes.map((n, i) => `*[${i + 1}] ${where(n)}*\n${n.snippet}`).join('\n\n');
+  const snippets = () => notes.map((n, i) => `📖 *[${i + 1}] ${where(n)}*\n${quote(n.snippet)}`).join('\n\n');
 
   if (!aiAvailable()) {
     if (!notes.length) return finish(`Nothing about "${clip(query, 60)}" in your notes yet.`);
-    return finish(`From your notes:\n\n${snippets()}`);
+    return finish(`🔎 *From your notes*\n\n${snippets()}`);
   }
   if (!notes.length) await wa.sendText(phone, '🔎 Nothing in your notes on that yet, answering from standard sources…');
   const excerpts = notes.map((n) => ({ label: where(n), text: excerptAround(n.content, query) }));
@@ -411,12 +436,12 @@ async function why(phone, user, qid = user.state.lastQid) {
   const query = `${q.stem} ${q.options[q.answer]}`;
   let notes = await store.searchNotes(query, { limit: 4, subject: q.subject });
   if (!notes.length) notes = await store.searchNotes(query, { limit: 3 });
-  const sources = notes.length ? `\n\n📚 *Sources*\n${notes.map((n, i) => `[${i + 1}] ${where(n)}`).join('\n')}` : '';
+  const sources = notes.length ? `\n\n📚 *Sources*\n${notes.map((n, i) => `_[${i + 1}] ${where(n)}_`).join('\n')}` : '';
   const buttons = [{ id: 'next', title: '➡️ Next' }, { id: `sim:${qid}`, title: '🔗 Similar' }];
   const offline = () => {
-    const lines = [`*${LETTERS[q.answer]}. ${q.options[q.answer]}*`];
-    if (q.explanation) lines.push('', q.explanation);
-    if (notes.length) lines.push('', ...notes.slice(0, 2).map((n, i) => `*[${i + 1}] ${where(n)}*\n${n.snippet}`));
+    const lines = [`✅ *${LETTERS[q.answer]}. ${q.options[q.answer]}*`];
+    if (q.explanation) lines.push('', `💡 ${q.explanation.trim()}`);
+    if (notes.length) lines.push('', ...notes.slice(0, 2).map((n, i) => `📖 *[${i + 1}] ${where(n)}*\n${quote(n.snippet)}`));
     if (!q.explanation && !notes.length) lines.push('', 'No explanation stored and nothing on it in your notes yet.');
     return lines.join('\n');
   };
@@ -447,8 +472,8 @@ async function showBank(phone) {
     if (!topics && !n) continue;
     const count = topics ? topics.reduce((a, r) => a + r.n, 0) : 0;
     const pyq = topics ? topics.reduce((a, r) => a + r.pyq, 0) : 0;
-    lines.push('', `*${s}*: ${count} Q${pyq ? ` (${pyq} PYQ)` : ''}${n ? ` · notes on ${plural(n.topics, 'topic')}` : ''}`);
-    if (topics) lines.push(topics.slice(0, 6).map((t) => `${t.topic} ${t.n}`).join(' · ') + (topics.length > 6 ? ` · +${topics.length - 6} more` : ''));
+    lines.push('', `📘 *${s}* · ${count} Q${pyq ? ` (${pyq} PYQ)` : ''}${n ? ` · 📝 ${plural(n.topics, 'topic')}` : ''}`);
+    if (topics) lines.push(`_${topics.slice(0, 6).map((t) => `${t.topic} ${t.n}`).join(' · ')}${topics.length > 6 ? ` · +${topics.length - 6} more` : ''}_`);
   }
   await wa.sendText(phone, lines.join('\n'));
 }
@@ -456,22 +481,24 @@ async function showBank(phone) {
 async function showStats(phone) {
   const s = await store.userStats(phone);
   if (!s.overall.n) return wa.sendText(phone, 'No answers yet. Send *q* to start.');
-  const pct = (c, n) => `${Math.round((100 * c) / n)}%`;
   const [st, rc] = [await store.streak(phone), await store.reviewCounts(phone)];
+  const p = pct(s.overall.c, s.overall.n);
   const lines = [
     `📊 *Your progress*`,
-    `Answered ${s.overall.n}, correct ${s.overall.c} (${pct(s.overall.c, s.overall.n)})`,
-    `Active ${s.activeDaysThisWeek}/7 days this week · 🔥 ${plural(st, 'day')} streak`,
-    rc.total ? `🔁 ${rc.due} due for review today, ${rc.total} in your review queue` : '🔁 Review queue empty',
+    '',
+    `🎯 Accuracy: *${p}%* (${s.overall.c}/${s.overall.n})`,
+    bar(p),
+    `🔥 Streak: *${plural(st, 'day')}* · active ${s.activeDaysThisWeek}/7 days this week`,
+    rc.total ? `🔁 Review: *${rc.due}* due today, ${rc.total} in queue` : '🔁 Review queue empty',
   ];
-  lines.push('', '*By subject*');
-  for (const r of s.bySubject) lines.push(`- ${r.subject}: ${r.c}/${r.n} (${pct(r.c, r.n)})`);
+  lines.push('', '📚 *By subject*');
+  for (const r of s.bySubject) lines.push(`${bar(pct(r.c, r.n), 5)} ${r.subject} · ${pct(r.c, r.n)}% (${r.c}/${r.n})`);
   if (s.weakTopics.length) {
-    lines.push('', '*Weakest topics*');
-    for (const r of s.weakTopics) lines.push(`- ${r.subject} › ${r.topic}: ${pct(r.c, r.n)}`);
-    lines.push('', 'Send *coach* to drill them, or *revise* for your review queue.');
+    lines.push('', '⚠️ *Weakest topics*');
+    for (const r of s.weakTopics) lines.push(`• ${r.subject} › ${r.topic} · ${pct(r.c, r.n)}%`);
   }
-  await wa.sendText(phone, lines.join('\n'));
+  const buttons = [{ id: 'coach', title: '🎯 Coach' }, ...(rc.due ? [{ id: 'revise', title: '🔁 Revise' }] : []), { id: 'next', title: '➡️ Question' }];
+  await sendWithButtons(phone, lines.join('\n'), buttons);
 }
 
 async function setDaily(phone, user, arg) {
@@ -648,7 +675,8 @@ async function coach(phone, user) {
   }
   await store.updateUser(phone, { state: { ...user.state, coach: weak.map((w) => ({ subject: w.subject, topic: w.topic })) } });
   const lines = ['🎯 *Your coach*', 'These topics cost you the most marks right now:'];
-  weak.forEach((w, i) => lines.push(`${i + 1}. ${w.subject} › ${w.topic}: ${pct(w.c, w.n)}% (${w.c}/${w.n})`));
+  lines.push('');
+  weak.forEach((w, i) => lines.push(`${i + 1}. *${w.topic}* · _${w.subject}_\n${bar(pct(w.c, w.n), 5)} ${pct(w.c, w.n)}% (${w.c}/${w.n})`));
   if (rc.due) lines.push('', `🔁 ${plural(rc.due, 'question')} due for review today: send *revise*.`);
   lines.push('', 'Tap one to drill 10 questions on it.');
   return wa.sendList(
@@ -885,6 +913,11 @@ function planSubject(user, today = localNow().date) {
   return plan.days[daysBetween(plan.start, today)] || null;
 }
 
+async function askExamDate(phone, user) {
+  await store.updateUser(phone, { state: { ...user.state, awaiting: 'exam' } });
+  return wa.sendText(phone, '📆 When is your exam? Type the date, e.g. *15-01-2027*.');
+}
+
 async function setExam(phone, user, date) {
   const today = localNow().date;
   if (date <= today) return wa.sendText(phone, 'That date is not in the future. Send it like *exam 15-01-2027*.');
@@ -1103,6 +1136,160 @@ const guessMime = (name = '') =>
 
 const looksLikeMaterial = (text) => text.length > 500 || (/\n\s*\(?[aA]\s*[).]/.test(text) && /\n\s*\(?[dD]\s*[).]/.test(text));
 
+
+// ---------- menus ----------
+
+// Most-used first: WhatsApp lists show only the first 10.
+const MAIN_MENU = [
+  { id: 'm:q', title: '📝 Question', description: 'One question now' },
+  { id: 'm:test', title: '🧪 Test', description: 'Pick a subject and length' },
+  { id: 'm:revise', title: '🔁 Revise', description: 'Questions due for review' },
+  { id: 'm:grand', title: '🏆 Grand mock', description: 'Timed, +4/−1' },
+  { id: 'm:today', title: '📆 Today & plan', description: 'Your plan to exam day' },
+  { id: 'm:coach', title: '🎯 Coach', description: 'Drill your weakest topics' },
+  { id: 'm:flash', title: '🃏 Flashcards', description: 'From your notes' },
+  { id: 'm:hy', title: '⭐ High-yield', description: 'Most-asked PYQ topics' },
+  { id: 'm:stats', title: '📊 Stats', description: 'Your progress' },
+  { id: 'm:db', title: '🗂 Database', description: 'Files, fixes, deletions' },
+  { id: 'm:spot', title: '🖼 Spot', description: 'Image question' },
+  { id: 'm:settings', title: '⚙️ Settings', description: 'Daily time, exam, name' },
+  { id: 'm:ask', title: '🧠 Ask', description: 'Ask from your notes' },
+  { id: 'm:help', title: '📖 All commands', description: 'Typed shortcuts' },
+];
+
+async function showMenu(phone, user) {
+  const [t, rc, st] = [await store.dbTotals(), await store.reviewCounts(phone), await store.streak(phone)];
+  const lines = [
+    `📚 *NEET PG Study Bot*${user.name ? ` · Hi ${user.name}!` : ''}`,
+    '',
+    `🗃 ${plural(t.questions, 'question')} · ${plural(t.notes, 'note section')}`,
+    `${st ? `🔥 ${plural(st, 'day')} streak` : '🌱 Answer a question to start a streak'}${rc.due ? ` · 🔁 ${rc.due} due today` : ''}`,
+  ];
+  if (user.exam_date && user.exam_date > localNow().date) lines.push(`📆 D-${daysBetween(localNow().date, user.exam_date)} to your exam`);
+  lines.push('', 'What would you like to do? You can also just ask a question or send a PDF.');
+  if (wa.isTelegram(phone) && !user.state.kb) {
+    // Install the quick-access keyboard once.
+    await store.updateUser(phone, { state: { ...user.state, kb: true } });
+    await wa.sendWithKeyboard(phone, '⌨️ Quick buttons are under the chat box.');
+  }
+  return wa.sendMenu(phone, lines.join('\n'), wa.isTelegram(phone) ? MAIN_MENU : MAIN_MENU.slice(0, 10), 2, 'Open menu');
+}
+
+const BACK = { id: 'm:menu', title: '🏠 Menu' };
+
+async function showSettings(phone, user) {
+  const lines = [
+    '⚙️ *Settings*',
+    '',
+    `⏰ Daily question: *${user.daily_enabled ? `on at ${user.daily_time}` : 'off'}*${user.daily_subject ? ` · ${user.daily_subject} only` : ''}`,
+    `📆 Exam date: *${user.exam_date ? longDate(user.exam_date) : 'not set'}*`,
+    `👤 Name: *${user.name || 'not set'}*`,
+  ];
+  return wa.sendMenu(phone, lines.join('\n'), [
+    { id: 'set:time', title: '⏰ Daily time' },
+    { id: user.daily_enabled ? 'set:off' : 'set:on', title: user.daily_enabled ? '🔕 Daily off' : '🔔 Daily on' },
+    { id: 'set:exam', title: '📆 Exam date' },
+    { id: 'set:name', title: '👤 Name' },
+    { id: 'm:buddy', title: '👥 Study buddies' },
+    BACK,
+  ]);
+}
+
+const DAILY_TIMES = ['06:00', '07:00', '08:00', '12:00', '16:00', '19:00', '21:00', '22:00'];
+
+// ---------- managing the database ----------
+
+async function dbMenu(phone, user) {
+  const t = await store.dbTotals();
+  const jobs = await store.activeJobs();
+  const lines = [
+    '🗂 *Your database*',
+    '',
+    `📝 ${plural(t.questions, 'question')}${t.pyq ? ` (${t.pyq} PYQ)` : ''}`,
+    `📖 ${plural(t.notes, 'note section')}`,
+    t.images ? `🖼 ${plural(t.images, 'image question')}` : null,
+    `📄 ${plural(t.files, 'uploaded file')}`,
+  ];
+  lines.splice(0, lines.length, ...lines.filter((l) => l !== null));
+  if (t.unchecked) lines.push(`⚠️ ${t.unchecked} answers worked out by AI (no key in the source)`);
+  if (jobs.length) {
+    lines.push('', '⏳ *Still reading*');
+    for (const j of jobs) {
+      const done = (j.done_parts || []).length;
+      lines.push(`• ${j.filename}: ${done}/${j.parts} parts${j.status === 'paused' ? ` · resumes ${whenText(j.resume_at)}` : ''}`);
+    }
+  }
+  const last = user.state.lastQid ? [{ id: 'db:fix', title: '✏️ Fix last answer' }, { id: 'db:delq', title: '🗑 Delete last Q' }] : [];
+  return wa.sendMenu(phone, lines.join('\n'), [{ id: 'db:files:0', title: '📄 My uploads' }, { id: 'bank', title: '📚 By subject' }, ...last, BACK]);
+}
+
+const PAGE = 8;
+const fileDate = (d) => new Date(d).toLocaleDateString('en-GB', { timeZone: config.timezone, day: 'numeric', month: 'short' });
+const fileLine = (f) => `${f.questions} Q · ${f.notes} notes · ${fileDate(f.created_at)}`;
+
+async function dbFiles(phone, offset = 0) {
+  const files = await store.listSources(PAGE + 1, offset);
+  if (!files.length) return wa.sendButtons(phone, '📄 No uploads yet. Send me a PDF, photo or text to start.', [BACK]);
+  const rows = files.slice(0, PAGE).map((f) => ({ id: `dbf:${f.id}`, title: clip(f.filename || 'untitled', 24), description: fileLine(f) }));
+  if (files.length > PAGE) rows.push({ id: `db:files:${offset + PAGE}`, title: '➡️ Older files' });
+  rows.push({ id: 'm:db', title: '⬅️ Back' });
+  const body = `📄 *Your uploads*${offset ? ` (from #${offset + 1})` : ''}\n\nTap a file to see it or delete it.`;
+  return wa.isTelegram(phone) ? wa.sendMenu(phone, body, rows.map((r) => ({ ...r, title: r.description ? `${r.title} · ${r.description}` : r.title })), 1) : wa.sendList(phone, body, 'Files', rows, 'Uploads');
+}
+
+async function dbFile(phone, id) {
+  const f = await store.getSource(id);
+  if (!f) return wa.sendButtons(phone, 'That file is no longer in your database.', [{ id: 'db:files:0', title: '📄 My uploads' }]);
+  return wa.sendButtons(phone, `📄 *${f.filename || 'untitled'}*\n\n📝 ${plural(f.questions, 'question')}\n📖 ${plural(f.notes, 'note section')}\n📅 Added ${fileDate(f.created_at)}`, [
+    { id: `dbdel:${f.id}`, title: '🗑 Delete file' },
+    { id: 'db:files:0', title: '⬅️ Back' },
+  ]);
+}
+
+async function dbConfirmDelete(phone, id) {
+  const f = await store.getSource(id);
+  if (!f) return wa.sendText(phone, 'That file is no longer in your database.');
+  return wa.sendButtons(phone, `⚠️ Delete *${f.filename || 'untitled'}* and its ${plural(f.questions, 'question')} and ${plural(f.notes, 'note section')}? Your answers to those questions go too. This can't be undone.`, [
+    { id: `dbdelok:${f.id}`, title: '🗑 Yes, delete' },
+    { id: 'm:db', title: '✖️ Cancel' },
+  ]);
+}
+
+async function dbFixPrompt(phone, user) {
+  const q = user.state.lastQid && (await store.getQuestion(user.state.lastQid));
+  if (!q) return wa.sendText(phone, 'Answer a question first; then you can fix its answer key here.');
+  return wa.sendMenu(
+    phone,
+    `✏️ *Fix the answer key*\n\n*${clip(q.stem, 300)}*\n\n${q.options.map((o, i) => `${i === q.answer ? '✅' : '▫️'} *${LETTERS[i]}.* ${o}`).join('\n')}\n\nWhich option is correct?`,
+    [...q.options.map((o, i) => ({ id: `dbfix:${q.id}:${i}`, title: `${LETTERS[i]}. ${clip(o, 20)}` })), { id: 'm:db', title: '✖️ Cancel' }]
+  );
+}
+
+async function dbFix(phone, user, qid, index) {
+  const q = await store.getQuestion(qid);
+  if (!q || !(index >= 0 && index < q.options.length)) return wa.sendText(phone, 'That question is no longer in your database.');
+  await store.setAnswer(qid, index);
+  return wa.sendButtons(phone, `✅ Saved. The answer is now *${LETTERS[index]}. ${q.options[index]}*.`, [{ id: 'next', title: '➡️ Next' }, { id: 'm:db', title: '🗂 Database' }]);
+}
+
+async function dbDeletePrompt(phone, user) {
+  const q = user.state.lastQid && (await store.getQuestion(user.state.lastQid));
+  if (!q) return wa.sendText(phone, 'Answer a question first; then you can delete it here.');
+  return wa.sendButtons(phone, `⚠️ Delete this question?\n\n_${clip(q.stem, 300)}_`, [
+    { id: `dbdq:${q.id}`, title: '🗑 Yes, delete' },
+    { id: 'm:db', title: '✖️ Cancel' },
+  ]);
+}
+
+async function dbDeleteQuestion(phone, user, qid) {
+  const ok = await store.deleteQuestion(qid);
+  const state = { ...user.state };
+  if (state.lastQid === qid) state.lastQid = null;
+  if (state.current?.qid === qid) state.current = null;
+  await store.updateUser(phone, { state });
+  return wa.sendButtons(phone, ok ? '🗑 Question deleted.' : 'That question was already gone.', [{ id: 'next', title: '➡️ Next' }, { id: 'm:db', title: '🗂 Database' }]);
+}
+
 // ---------- entry point ----------
 
 /**
@@ -1131,7 +1318,7 @@ const ONBOARDING = (name) => `👋 Hi${name ? ` ${name}` : ''}! I'm your NEET PG
 *2.* Practise: *q* for one question, *test* for a test, *grand* for a timed mock.
 *3.* Ask me anything, e.g. "DOC for absence seizures?", and I answer from your notes.
 
-Every morning I send a question of the day. Send *help* for everything I can do.`;
+Every morning I send a question of the day. Tap *🏠 Menu* any time to find everything.`;
 
 async function handle(msg, { download = (id) => wa.downloadMedia(msg.from, id) } = {}) {
   const phone = msg.from;
@@ -1155,7 +1342,10 @@ async function handle(msg, { download = (id) => wa.downloadMedia(msg.from, id) }
     });
     if (name) user.name = name;
     if (firstContact && msg.type === 'text' && /^(hi|hello|hey|start|help|menu)\b/i.test(msg.text?.body || '')) {
-      return await wa.sendText(phone, ONBOARDING(user.name));
+      await wa.sendWithKeyboard(phone, ONBOARDING(user.name));
+      user.state = { ...user.state, kb: true };
+      await store.updateUser(phone, { state: user.state });
+      return await showMenu(phone, user);
     }
 
     // Uploads
@@ -1207,6 +1397,52 @@ async function handle(msg, { download = (id) => wa.downloadMedia(msg.from, id) }
       if (kind === 'ptest') return await startTest(phone, user, { subject: a, count: 10 });
       if (kind === 'pflash') return await startFlash(phone, user, { subject: a });
       if (kind === 'phy') return await showHighYield(phone, a);
+      if (kind === 'm') {
+        if (a === 'menu') return await showMenu(phone, user);
+        if (a === 'q') return await askSingle(phone, user);
+        if (a === 'test') return (await testRunning(phone, user)) || (await testPicker(phone));
+        if (a === 'revise') return await startTest(phone, user, { wrongOnly: true, count: 20 });
+        if (a === 'grand') return await grandChooser(phone, user);
+        if (a === 'today') return user.exam_date ? await showToday(phone, user) : await askExamDate(phone, user);
+        if (a === 'coach') return await coach(phone, user);
+        if (a === 'flash') return await startFlash(phone, user);
+        if (a === 'hy') return await showHighYield(phone, '');
+        if (a === 'stats') return await showStats(phone);
+        if (a === 'db') return await dbMenu(phone, user);
+        if (a === 'spot') return await askSpot(phone, user, '');
+        if (a === 'settings') return await showSettings(phone, user);
+        if (a === 'buddy') return await buddy(phone, user, '');
+        if (a === 'ask') return await wa.sendText(phone, '🧠 Type your question, e.g. _"DOC for absence seizures?"_ or _"explain thyroid storm"_. I answer from your notes and cite them.');
+        if (a === 'help') return await sendWithButtons(phone, HELP, [BACK], 'Back to the menu?');
+      }
+      if (kind === 'set') {
+        if (a === 'on' || a === 'off') return await setDaily(phone, user, a);
+        if (a === 'time') {
+          return await wa.sendMenu(phone, `⏰ When should the daily question come? (${config.timezone})
+Or type e.g. *daily 07:30*.`, DAILY_TIMES.map((t) => ({ id: `dtime:${t.replace(':', '')}`, title: t })), 4);
+        }
+        if (a === 'exam') return await askExamDate(phone, user);
+        if (a === 'name') {
+          await store.updateUser(phone, { state: { ...user.state, awaiting: 'name' } });
+          return await wa.sendText(phone, '👤 What should I call you? Type your name.');
+        }
+      }
+      if (kind === 'dtime') return await setDaily(phone, user, `${a.slice(0, 2)}:${a.slice(2)}`);
+      if (kind === 'db') {
+        if (a === 'files') return await dbFiles(phone, Number(b) || 0);
+        if (a === 'fix') return await dbFixPrompt(phone, user);
+        if (a === 'delq') return await dbDeletePrompt(phone, user);
+      }
+      if (kind === 'dbf') return await dbFile(phone, Number(a));
+      if (kind === 'dbdel') return await dbConfirmDelete(phone, Number(a));
+      if (kind === 'dbdelok') {
+        const f = await store.getSource(Number(a));
+        if (!f) return await wa.sendText(phone, 'That file was already deleted.');
+        const r = await store.deleteSource(f.id);
+        return await wa.sendButtons(phone, `🗑 Deleted *${f.filename || 'untitled'}*: ${plural(r.questions, 'question')} and ${plural(r.notes, 'note section')} removed.`, [{ id: 'db:files:0', title: '📄 My uploads' }, BACK]);
+      }
+      if (kind === 'dbfix') return await dbFix(phone, user, Number(a), Number(b));
+      if (kind === 'dbdq') return await dbDeleteQuestion(phone, user, Number(a));
       if (kind === 'grand') return await startGrand(phone, user, 200);
       if (kind === 'gstart') return await startGrand(phone, user, Number(a) || 200);
       if (kind === 'revise') return await startTest(phone, user, { wrongOnly: true, count: 20 });
@@ -1239,10 +1475,31 @@ async function handle(msg, { download = (id) => wa.downloadMedia(msg.from, id) }
     if (msg.type === 'button') return await dailyQuestion(phone, user);
 
     const text = (msg.text?.body || '').trim();
-    if (!text) return await wa.sendText(phone, 'Send *help* to see what I can do.');
-    const lower = text.toLowerCase();
+    if (!text) return await showMenu(phone, user);
+    // Quick-keyboard buttons send "📝 Question"; commands work with or without the emoji or a leading slash.
+    const cmdText = text.replace(/^[^\p{L}\p{N}(]+/u, '');
+    const lower = cmdText.toLowerCase();
     const [cmd, ...restWords] = lower.split(/\s+/);
-    const rest = text.slice(cmd.length).trim();
+    const rest = cmdText.slice(cmd.length).trim();
+
+    // A reply to "What should I call you?" or "When is your exam?"
+    const awaiting = user.state.awaiting;
+    if (awaiting) {
+      await store.updateUser(phone, { state: { ...user.state, awaiting: null } });
+      user.state = { ...user.state, awaiting: null };
+      if (awaiting === 'exam') {
+        const date = parseDate(text);
+        if (date) return await setExam(phone, user, date);
+        if (!/^(menu|home|stop|cancel|help|q|question|test|revise|stats)$/.test(cmd)) {
+          await store.updateUser(phone, { state: { ...user.state, awaiting: 'exam' } });
+          return await wa.sendText(phone, "I couldn't read that date. Try *15-01-2027* or *15 Jan 2027*.");
+        }
+      }
+      if (awaiting === 'name' && text.length <= 30 && !/^(menu|help|stop|cancel)$/i.test(lower)) {
+        await store.updateUser(phone, { name: text });
+        return await wa.sendButtons(phone, `👋 Nice to meet you, *${text}*!`, [BACK]);
+      }
+    }
 
     // A letter answers the open question.
     const letter = text.match(/^\(?([a-dA-D1-4])\)?\.?$/);
@@ -1257,8 +1514,22 @@ async function handle(msg, { download = (id) => wa.downloadMedia(msg.from, id) }
     if (letter && !user.state.spot?.free) return await wa.sendText(phone, 'No question is open right now. Send *q* for one.');
 
     switch (cmd) {
-      case 'hi': case 'hello': case 'hey': case 'help': case 'menu': case 'start':
-        return await wa.sendText(phone, HELP);
+      case 'hi': case 'hello': case 'hey': case 'menu': case 'start': case 'home':
+        return await showMenu(phone, user);
+      case 'help': case 'commands':
+        return await sendWithButtons(phone, HELP, [BACK], 'Back to the menu?');
+      case 'settings': case 'setting':
+        return await showSettings(phone, user);
+      case 'database': case 'db': case 'manage': case 'files': case 'uploads':
+        return await dbMenu(phone, user);
+      case 'fix': {
+        const l = rest.match(/^\(?([a-d])\)?$/i);
+        if (!l) return await dbFixPrompt(phone, user);
+        if (!user.state.lastQid) return await wa.sendText(phone, 'Answer a question first, then send *fix B* to correct its key.');
+        return await dbFix(phone, user, user.state.lastQid, LETTERS.indexOf(l[1].toUpperCase()));
+      }
+      case 'delete': case 'remove':
+        return await dbDeletePrompt(phone, user);
       case 'q': case 'question': case 'quiz': case 'next':
         return await askSingle(phone, user, { subject: matchSubject(restWords[0]) });
       case 'test':
@@ -1274,12 +1545,7 @@ async function handle(msg, { download = (id) => wa.downloadMedia(msg.from, id) }
       case 'grand': case 'mock': case 'fullmock': {
         const n = Number(restWords.find((w) => /^\d+$/.test(w)));
         if (n) return await startGrand(phone, user, n);
-        if (await testRunning(phone, user)) return;
-        return await wa.sendButtons(phone, '🏆 *Grand test*: timed like the real paper (1.05 min per question), +4/−1. How long?', [
-          { id: 'gstart:200', title: '200 Q · 3.5 h' },
-          { id: 'gstart:100', title: '100 Q · 1h 45m' },
-          { id: 'gstart:50', title: '50 Q · 53 min' },
-        ]);
+        return await grandChooser(phone, user);
       }
       case 'plan': case 'schedule':
         return await showPlan(phone, user, rest);
@@ -1320,7 +1586,7 @@ async function handle(msg, { download = (id) => wa.downloadMedia(msg.from, id) }
         if (user.state.test?.grand && user.state.current) return await grandSkip(phone, user);
         if (user.state.test) return await wa.sendText(phone, 'Pick your best guess, or send *stop* to end the test.');
         return await askSingle(phone, user);
-      case 'bank': case 'subjects': case 'database': case 'db':
+      case 'bank': case 'subjects':
         return await showBank(phone);
       case 'stats': case 'progress': case 'score':
         return await showStats(phone);

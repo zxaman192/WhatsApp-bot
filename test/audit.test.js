@@ -53,10 +53,11 @@ beforeEach(() => {
 
 test('first contact gets a short onboarding, then help', async () => {
   await sendAs(ME, { type: 'text', text: { body: 'hi' }, firstName: 'Harsh' });
-  assert.match(lastText(), /Hi Harsh! I'm your NEET PG study partner/);
+  assert.match(texts(), /Hi Harsh! I'm your NEET PG study partner/);
+  assert.match(lastText(), /NEET PG Study Bot/);
   assert.equal((await store.getUser(ME)).name, 'Harsh', 'name taken from Telegram');
   await say('help');
-  assert.match(lastText(), /NEET PG prep bot/);
+  assert.match(texts(), /📥 \*Add material\*/);
 });
 
 test('every command and odd input gets a clean reply, never an error', async () => {
@@ -175,4 +176,72 @@ test('a paused upload job resumes and reports when done', async () => {
   assert.match(texts(), /couldn't finish reading \*paused\.pdf\*/);
   assert.equal((await store.getJob(id)).status, 'failed');
   assert.deepEqual(await store.resumableJobs(), []);
+});
+
+test('menu, settings and database buttons all answer cleanly', async () => {
+  const ids = ['m:menu', 'm:q', 'm:test', 'm:revise', 'm:grand', 'm:today', 'm:coach', 'm:flash', 'm:hy', 'm:stats', 'm:db', 'm:spot', 'm:settings', 'm:buddy', 'm:ask', 'm:help',
+    'set:time', 'dtime:0730', 'set:off', 'set:on', 'db:files:0', 'db:files:99', 'dbf:99999', 'dbdel:99999', 'dbdelok:99999', 'db:fix', 'db:delq', 'dbfix:99999:1', 'dbdq:99999'];
+  for (const id of ids) {
+    out = [];
+    await tap(id);
+    assert.ok(out.length, `no reply to ${id}`);
+    assert.doesNotMatch(texts(), /something went wrong|undefined|NaN|\[object/i, `bad reply to ${id}: ${texts()}`);
+    await say('stop');
+  }
+  await say('menu');
+  assert.match(texts(), /NEET PG Study Bot/);
+});
+
+test('settings: exam date and name by reply', async () => {
+  await tap('set:exam');
+  assert.match(lastText(), /When is your exam/);
+  await say('not a date 99');
+  assert.match(lastText(), /couldn't read that date/);
+  await say('15-01-2030');
+  assert.match(texts(), /Exam on/);
+  await tap('set:name');
+  await say('Dr Harsh');
+  assert.equal((await store.getUser(ME)).name, 'Dr Harsh');
+  await say('📊 Stats'); // the quick keyboard sends emoji text
+  assert.match(texts(), /Your progress/);
+});
+
+test('database: fix an answer key, delete a question, delete a file', async () => {
+  const sourceId = await store.addSource('tiny.pdf', 'pdf', ME);
+  await store.addQuestion({ subject: 'Anatomy', topic: 'Upper limb', stem: 'Nerve injured in fracture of surgical neck of humerus', options: ['Radial', 'Axillary', 'Ulnar', 'Median'], answer: 0, explanation: '', year: '', exam: '', answerChecked: false, origin: 'bank', page: null, sourceId });
+  const [qid] = await store.pickQuestions(ME, { subject: 'Anatomy', count: 1 });
+  await say('stop');
+  await askAndAnswer(qid);
+  await say('fix B');
+  assert.match(lastText(), /answer is now \*B\. Axillary\*/);
+  assert.equal((await store.getQuestion(qid)).answer, 1);
+  assert.equal((await store.getQuestion(qid)).answer_checked, true);
+
+  out = [];
+  await tap('db:files:0');
+  assert.match(JSON.stringify(out.at(-1)), /tiny\.pdf/);
+  await tap(`dbdel:${sourceId}`);
+  assert.match(lastText(), /can't be undone/);
+  await tap(`dbdelok:${sourceId}`);
+  assert.match(lastText(), /Deleted \*tiny\.pdf\*: 1 question/);
+  assert.ok(!(await store.getQuestion(qid)));
+  // The deleted question no longer breaks "why" or "similar".
+  out = [];
+  await say('why');
+  await say('similar');
+  assert.doesNotMatch(texts(), /something went wrong/);
+});
+
+async function askAndAnswer(qid) {
+  const u = await store.getUser(ME);
+  await store.updateUser(ME, { state: { ...u.state, test: null, current: { qid, mode: 'single' } } });
+  await say('A');
+}
+
+test('Telegram gets safe HTML, AI Markdown is tidied', async () => {
+  const { toTelegramHtml } = await import('../src/telegram.js');
+  const { tidy } = await import('../src/ingest/ai.js');
+  assert.equal(toTelegramHtml('*Bold* and _it_ <x> file_name.pdf'), '<b>Bold</b> and <i>it</i> &lt;x&gt; file_name.pdf');
+  assert.equal(toTelegramHtml('> *A. Ethosuximide*'), '<blockquote><b>A. Ethosuximide</b></blockquote>');
+  assert.equal(tidy('## DOC\n**Ethosuximide**\n- T-type Ca'), '*DOC*\n*Ethosuximide*\n• T-type Ca');
 });
