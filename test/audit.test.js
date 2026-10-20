@@ -53,7 +53,7 @@ beforeEach(() => {
 
 test('first contact gets a short onboarding, then help', async () => {
   await sendAs(ME, { type: 'text', text: { body: 'hi' }, firstName: 'Harsh' });
-  assert.match(texts(), /Hi Harsh! I'm your NEET PG study partner/);
+  assert.match(texts(), /Welcome, Harsh!\*\n_I'm your NEET PG study partner/);
   assert.match(lastText(), /NEET PG Study Bot/);
   assert.equal((await store.getUser(ME)).name, 'Harsh', 'name taken from Telegram');
   await say('help');
@@ -106,15 +106,15 @@ test('a running test is not silently dropped by q, test or grand', async () => {
   for (const cmd of ['q', 'test pharma', 'grand 50']) {
     out = [];
     await say(cmd);
-    assert.match(lastText(), /middle of a test/);
+    assert.match(lastText(), /Test in progress/);
     assert.deepEqual(buttonsOf(out.at(-1)), ['tcont', 'tend']);
   }
   assert.deepEqual((await store.getUser(ME)).state.test.ids, before.ids);
   out = [];
   await tap('tcont');
-  assert.match(lastText(), /Q 1\/3/);
+  assert.match(lastText(), /Question 1 of 3/);
   await tap('tend');
-  assert.match(texts(), /Test finished/);
+  assert.match(texts(), /Test complete/);
   assert.equal((await store.getUser(ME)).state.test, null);
 });
 
@@ -198,7 +198,7 @@ test('settings: exam date and name by reply', async () => {
   await say('not a date 99');
   assert.match(lastText(), /couldn't read that date/);
   await say('15-01-2030');
-  assert.match(texts(), /Exam on/);
+  assert.match(texts(), /Exam date saved/);
   await tap('set:name');
   await say('Dr Harsh');
   assert.equal((await store.getUser(ME)).name, 'Dr Harsh');

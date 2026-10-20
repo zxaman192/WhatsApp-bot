@@ -10,6 +10,7 @@
   "scripts": {
     "start": "node src/server.js",
     "chat": "node scripts/chat.js",
+    "screens": "node scripts/screens.js",
     "import": "node scripts/import.js",
     "test": "node --test test/*.test.js"
   },

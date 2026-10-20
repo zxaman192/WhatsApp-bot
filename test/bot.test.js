@@ -89,7 +89,7 @@ test('test command arguments', () => {
 test('upload a text question bank with a caption: sorted under the subject', async () => {
   files = { m1: { buffer: Buffer.from(BANK), mimeType: 'text/plain' } };
   await send({ type: 'document', document: { id: 'm1', mime_type: 'text/plain', filename: 'pharma_qbank.txt', caption: 'pharma' } });
-  assert.match(lastText(), /Added 3 questions/);
+  assert.match(lastText(), /Upload complete[\s\S]*Questions:\* 3/);
   assert.match(lastText(), /Pharmacology/);
   // Same file again: all duplicates.
   await send({ type: 'document', document: { id: 'm1', mime_type: 'text/plain', filename: 'pharma_qbank.txt', caption: 'pharma' } });
@@ -120,23 +120,23 @@ test('note reference after answering cites file and page', async () => {
   const user = await store.getUser(ME);
   await store.updateUser(ME, { state: { ...user.state, current: { qid, mode: 'single' } } });
   await say('b');
-  assert.match(lastText(), /You chose B/);
+  assert.match(lastText(), /You chose _B/);
   assert.match(lastText(), /From your notes\* · _Pharmacology › Antiepileptics \(p\.12\)_/);
 });
 
 test('full test flow with typed answers and a summary', async () => {
   await say('test pharma 3');
-  assert.match(out[0].text.body, /Test · Pharmacology/);
+  assert.match(out[0].text.body, /Test: Pharmacology/);
   for (let i = 0; i < 3; i++) await say('A');
-  assert.match(lastText(), /Test finished/);
-  assert.match(lastText(), /Score: \*\d\/3\*/);
+  assert.match(lastText(), /Test complete/);
+  assert.match(lastText(), /Score: \d\/3\*/);
 });
 
 test('revise picks wrong answers', async () => {
   await say('revise');
   assert.match(out[0].text.body, /Revision/);
   await say('stop');
-  assert.match(lastText(), /Test finished/);
+  assert.match(lastText(), /Test complete/);
 });
 
 test('where shows notes and questions locations', async () => {
@@ -154,7 +154,7 @@ test('explain without Claude returns matching note snippets', async () => {
 
 test('bank and stats', async () => {
   await say('bank');
-  assert.match(lastText(), /Your bank: 3 questions/);
+  assert.match(lastText(), /Your question bank\*\n_3 questions/);
   await say('stats');
   assert.match(lastText(), /Your progress/);
 });
@@ -201,9 +201,9 @@ test('text PDF without Claude key: MCQs with an answer key are sorted by keyword
   ]);
   files = { pdf1: { buffer: pdf, mimeType: 'application/pdf' } };
   await send({ type: 'document', document: { id: 'pdf1', mime_type: 'application/pdf', filename: 'mixed_pyq.pdf' } });
-  assert.match(lastText(), /Added 2 questions/);
-  assert.match(lastText(), /\*Medicine\*\n- Neurology: 1 Q/);
-  assert.match(lastText(), /\*Forensic Medicine\*\n- Toxicology: 1 Q/);
+  assert.match(lastText(), /Questions:\* 2\n/);
+  assert.match(lastText(), /\*Medicine\*\n• Neurology: 1 Q/);
+  assert.match(lastText(), /\*Forensic Medicine\*\n• Toxicology: 1 Q/);
   const [hit] = await store.searchQuestions('organophosphate');
   assert.equal(hit.page, 2);
 });
@@ -214,7 +214,7 @@ test('text PDF without MCQs is kept as notes per page', async () => {
   ]);
   files = { pdf2: { buffer: pdf, mimeType: 'application/pdf' } };
   await send({ type: 'document', document: { id: 'pdf2', mime_type: 'application/pdf', filename: 'fmt_notes.pdf' } });
-  assert.match(lastText(), /Added 1 note sections/);
+  assert.match(lastText(), /Note sections:\* 1\n/);
   assert.match(lastText(), /Forensic Medicine/);
   await say('where rigor mortis');
   assert.match(lastText(), /Forensic Medicine › Thanatology \(fmt_notes.pdf p.1\)/);
@@ -254,13 +254,13 @@ test('telegram: strangers are told their id, allowed users share the same bank',
     { from: 'tg:777', id: 'tg-x2', type: 'document', document: { id: 'tgf', mime_type: 'text/plain', filename: 'pharma2.txt', caption: 'pharma' } },
     { download: async (id) => files[id] }
   );
-  assert.match(out.at(-1).text, /Added 2 questions/);
+  assert.match(out.at(-1).text, /Questions:<\/b> 2\n/);
   assert.match(out.at(-1).text, /1 were already in your bank/);
 
   // The WhatsApp user sees the Telegram upload.
   const before = (await store.bankSummary()).reduce((a, r) => a + r.n, 0);
   await say('bank');
-  assert.match(lastText(), new RegExp(`Your bank: ${before} questions`));
+  assert.match(lastText(), new RegExp(`_${before} questions`));
   assert.ok((await store.searchQuestions('myoclonic')).length, 'Telegram upload is searchable from WhatsApp');
 
   // Questions on Telegram come with A–D buttons on one row.
@@ -270,7 +270,7 @@ test('telegram: strangers are told their id, allowed users share the same bank',
   assert.equal(kb.length, 1);
   assert.deepEqual(kb[0].map((b) => b.text), ['A', 'B', 'C', 'D']);
   await handleMessage({ from: 'tg:777', id: 'tg-x4', callbackId: 'c9', type: 'interactive', interactive: { list_reply: { id: kb[0][0].callback_data } } });
-  assert.match(out.at(-1).text, /Correct|You chose A/);
+  assert.match(out.at(-1).text, /Correct|You chose/);
 });
 
 test('Gemini request shape and response parsing (mocked)', async () => {

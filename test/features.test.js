@@ -122,7 +122,7 @@ test('spaced repetition: a wrong answer comes back tomorrow, then after 3, 7 and
   const u = await store.getUser(ME);
   await store.updateUser(ME, { state: { ...u.state, current: { qid: q.id, mode: 'single' } } });
   await tap(`ans:${q.id}:0`);
-  assert.match(lastText(), /You chose A/);
+  assert.match(lastText(), /You chose _A/);
   assert.match(lastText(), /Back for review on/);
   const today = localNow().date;
   const row = async () => (await store.reviewCounts(ME));
@@ -143,10 +143,10 @@ test('spaced repetition: a wrong answer comes back tomorrow, then after 3, 7 and
 
 test('grand test: timed, +4/−1, skip, no answers until the end', async () => {
   await say('grand 10');
-  assert.match(out[0].text.body, /Grand test\*: 10 questions/);
-  assert.match(out[0].text.body, /11m on the clock/);
+  assert.match(out[0].text.body, /Grand test started\*\n\n📝 \*10\* questions/);
+  assert.match(out[0].text.body, /11m\* on the clock/);
   const card = out.at(-1);
-  assert.match(card.interactive.body.text, /Q 1\/10 · ⏱ 11m left/);
+  assert.match(card.interactive.body.text, /Question 1 of 10  ·  ⏱ 11m left/);
   assert.equal(card.interactive.action.sections[0].rows.at(-1).title, 'Skip');
 
   let right = 0;
@@ -158,13 +158,13 @@ test('grand test: timed, +4/−1, skip, no answers until the end', async () => {
     await tap(`ans:${q.id}:${pickRight ? q.answer : (q.answer + 1) % 4}`);
     pickRight ? right++ : wrong++;
     assert.equal(out.length, 1, 'only the next question, no explanation');
-    assert.match(lastText(), new RegExp(`Q ${i + 2}/10`));
+    assert.match(lastText(), new RegExp(`Question ${i + 2} of 10`));
   }
   await say('skip');
   const result = lastText();
-  assert.match(result, /Grand test finished/);
-  assert.match(result, new RegExp(`Marks: \\*${4 * right - wrong}/40\\*`));
-  assert.match(result, new RegExp(`✅ ${right} right · ❌ ${wrong} wrong · ⏭ 1 skipped`));
+  assert.match(result, /Grand test complete/);
+  assert.match(result, new RegExp(`Marks: ${4 * right - wrong}/40\\*`));
+  assert.match(result, new RegExp(`✅ ${right} right  ·  ❌ ${wrong} wrong  ·  ⏭ 1 skipped`));
   assert.match(result, /By subject/);
   assert.match(result, /review queue/);
 });
@@ -177,7 +177,7 @@ test('grand test ends when time is up', async () => {
   await tap(`ans:${q.id}:${q.answer}`);
   assert.match(lastText(), /Time's up/);
   // The answer came in after the clock ran out, so it isn't scored.
-  assert.match(lastText(), /✅ 0 right · ❌ 0 wrong · ⏭ 0 skipped · 10 not reached/);
+  assert.match(lastText(), /✅ 0 right  ·  ❌ 0 wrong  ·  ⏭ 0 skipped  ·  10 not reached/);
 });
 
 test('image questions: save with "spot:", typed answer, then multiple choice', async () => {
@@ -225,7 +225,7 @@ test('voice notes need Gemini; with it they are transcribed and handled as text'
     await send({ type: 'audio', audio: { id: 'v1', mime_type: 'audio/ogg; codecs=opus' } });
     assert.deepEqual(g.calls[0].contents[0].parts[0], { inline_data: { mime_type: 'audio/ogg', data: Buffer.from('ogg').toString('base64') } });
     assert.match(out[0].text.body, /"bank"/);
-    assert.match(lastText(), /Your bank/);
+    assert.match(lastText(), /Your question bank/);
   } finally {
     g.restore();
   }
@@ -245,7 +245,7 @@ test('YouTube lectures and long recordings become notes and questions (Gemini)',
     await say('https://youtu.be/abc123XYZ pharma');
     assert.deepEqual(g.calls[0].contents[0].parts[0], { file_data: { file_uri: 'https://youtu.be/abc123XYZ' } });
     assert.match(g.calls[0].contents[0].parts.at(-1).text, /recorded lecture/);
-    assert.match(lastText(), /Added 1 questions and 1 note sections from \*YouTube lecture\*/);
+    assert.match(lastText(), /Upload complete\*\n_YouTube lecture_\n\n📝 \*Questions:\* 1\n📖 \*Note sections:\* 1/);
 
     files = { lec: { buffer: Buffer.alloc(2 * 1024 * 1024, 1), mimeType: 'audio/mpeg' } };
     out = [];
@@ -253,7 +253,7 @@ test('YouTube lectures and long recordings become notes and questions (Gemini)',
     result.notes[0].content = 'Give adrenaline intramuscularly in the anterolateral thigh.';
     await send({ type: 'audio', audio: { id: 'lec', mime_type: 'audio/mpeg' } });
     assert.match(g.calls[1].contents[0].parts[0].inline_data.mime_type, /audio\/mpeg/);
-    assert.match(lastText(), /from \*lecture recording\*/);
+    assert.match(lastText(), /_lecture recording_/);
   } finally {
     g.restore();
   }
@@ -268,25 +268,25 @@ test('coach finds weak topics and drills them', async () => {
   out = [];
   await say('coach');
   assert.match(lastText(), /Your coach/);
-  assert.match(lastText(), /\*Antiepileptics\* · _Pharmacology_/);
+  assert.match(lastText(), /\*1\. Antiepileptics\* _\(Pharmacology\)_/);
   const row = out.at(-1).interactive.action.sections[0].rows.find((r) => r.title === 'Antiepileptics');
   out = [];
   await tap(row.id);
-  assert.match(out[0].text.body, /Test · Pharmacology · "Antiepileptics"/);
+  assert.match(out[0].text.body, /Test: Pharmacology · "Antiepileptics"/);
   await say('stop');
 });
 
 test('flashcards from notes without AI: show, knew it, missed, summary', async () => {
   await say('flash pharma antiepileptics');
   let card = out.at(-1);
-  assert.match(card.interactive.body.text, /Card 1\/\d\* · _Pharmacology › Antiepileptics \(p\.3\)_/);
-  const total = Number(card.interactive.body.text.match(/Card 1\/(\d)/)[1]);
+  assert.match(card.interactive.body.text, /Flashcard 1 of \d\*\n_Pharmacology › Antiepileptics \(p\.3\)_/);
+  const total = Number(card.interactive.body.text.match(/Flashcard 1 of (\d)/)[1]);
   for (let i = 0; i < total; i++) {
     await tap(`flash:show:${i}`);
     assert.match(lastText(), /💡/);
     await tap(i === 0 ? `flash:no:${i}` : `flash:yes:${i}`);
   }
-  assert.match(lastText(), new RegExp(`you knew \\*${total - 1}/${total}\\*`));
+  assert.match(lastText(), new RegExp(`You knew \\*${total - 1} of ${total}\\*`));
   assert.match(lastText(), /Go over these/);
   await tap('flash:yes:0');
   assert.match(lastText(), /That card is done/);
@@ -297,18 +297,18 @@ test('similar questions and practising them', async () => {
   const u = await store.getUser(ME);
   await store.updateUser(ME, { state: { ...u.state, lastQid: q.id } });
   await say('similar');
-  assert.match(lastText(), /Questions like/);
+  assert.match(lastText(), /Similar questions/);
   assert.match(lastText(), /absence seizures/i);
   out = [];
   await tap('simtest');
-  assert.match(out[0].text.body, /Test · Similar questions/);
+  assert.match(out[0].text.body, /Test: Similar questions/);
   await say('stop');
 });
 
 test('high-yield ranks topics by PYQ years', async () => {
   await say('hy');
   assert.match(lastText(), /High-yield/);
-  assert.match(lastText(), /1\. Pharmacology › Antiepileptics: asked in 2 years \(2019, 2021\)/);
+  assert.match(lastText(), /\*1\. Antiepileptics\* _\(Pharmacology\)_\n    asked in 2 years \(2019, 2021\)/);
   await say('hy patho');
   assert.match(lastText(), /No PYQs tagged yet/);
 });
@@ -319,12 +319,12 @@ test('exam date, plan, today, and the daily question follows the plan', async ()
   await say(`exam ${exam.split('-').reverse().join('-')}`);
   assert.match(lastText(), /60 days to go/);
   await say('plan');
-  assert.match(lastText(), /\*D-60\*/);
+  assert.match(lastText(), /D-60 · exam on/);
   assert.match(lastText(), /Last 6 days: grand tests and revision/);
   assert.match(lastText(), /Next 7 days/);
   await say('today');
-  assert.match(lastText(), /D-60\* · Today: \*/);
-  const subject = lastText().match(/Today: \*(.+?)\*/)[1];
+  assert.match(lastText(), /Today's plan\*  ·  D-60\n\n📘 Today's subject: \*/);
+  const subject = lastText().match(/Today's subject: \*(.+?)\*/)[1];
 
   await store.updateUser(ME, { last_daily_date: null, last_inbound_at: new Date().toISOString(), daily_time: '00:00', daily_enabled: true });
   out = [];

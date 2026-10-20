@@ -453,20 +453,23 @@ export function formatSummary(summary, filename) {
     const parts = [];
     if (summary.questions) parts.push(`${summary.questions} questions`);
     if (summary.notes) parts.push(`${summary.notes} note sections`);
-    lines.push(`✅ Added ${parts.join(' and ')} from ${name}, sorted like this:`);
+    lines.push(`✅ *Upload complete*`, `_${filename || 'Your upload'}_`, '');
+    if (summary.questions) lines.push(`📝 *Questions:* ${summary.questions}`);
+    if (summary.notes) lines.push(`📖 *Note sections:* ${summary.notes}`);
+    lines.push('', '🗂 *Filed under*');
     for (const [subject, topics] of Object.entries(summary.bySubject)) {
-      lines.push('', `*${subject}*`);
+      lines.push('', `📘 *${subject}*`);
       for (const [topic, c] of Object.entries(topics)) {
         const bits = [];
         if (c.questions) bits.push(`${c.questions} Q`);
         if (c.notes) bits.push(`${c.notes} notes`);
-        lines.push(`- ${topic}: ${bits.join(', ')}`);
+        lines.push(`• ${topic}: ${bits.join(', ')}`);
       }
     }
   }
   if (summary.paused) {
     const { partsDone, parts, resumeAt } = summary.paused;
-    lines.push('', `⏸ Read ${partsDone} of ${parts} parts so far. The free AI quota ran out, so I'll carry on by myself ${whenText(resumeAt)} and message you when it's done. Nothing to resend.`);
+    lines.push('', `⏸ *Paused* at part ${partsDone} of ${parts}. The free AI quota ran out, so I'll carry on by myself ${whenText(resumeAt)} and message you when it's done. Nothing to resend.`);
   }
   if (summary.duplicates) lines.push('', `${summary.duplicates} were already in your bank, skipped.`);
   if (summary.skipped) lines.push(`${summary.skipped} couldn't be read as complete 4-option questions.`);

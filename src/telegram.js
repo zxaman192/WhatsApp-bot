@@ -45,7 +45,8 @@ export function toTelegramHtml(text) {
   const out = [];
   let quote = [];
   const flush = () => {
-    if (quote.length) out.push(`<blockquote>${quote.join('\n')}</blockquote>`);
+    // Long passages from the notes fold away; the reader taps to expand them.
+    if (quote.length) out.push(`<blockquote${quote.length > 4 ? ' expandable' : ''}>${quote.join('\n')}</blockquote>`);
     quote = [];
   };
   for (const line of lines) {
