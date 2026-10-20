@@ -97,7 +97,8 @@ export async function transcribeWithGroq(buffer, mimeType) {
   if (Date.now() < restingUntil) throw new AiBusyError('Groq is resting after a rate limit.', restingUntil);
   const ext = (mimeType.split('/')[1] || 'ogg').split(';')[0].replace('mpeg', 'mp3');
   const form = new FormData();
-  form.append('model', 'whisper-large-v3-turbo');
+  const whisper = offered?.filter((m) => /whisper/i.test(m)) || [];
+  form.append('model', whisper.find((m) => /turbo/.test(m)) || whisper[0] || 'whisper-large-v3-turbo');
   form.append('file', new Blob([buffer], { type: mimeType }), `voice.${ext}`);
   form.append('prompt', 'NEET PG medical question. Drug and disease names in English.');
   const res = await fetch(`${BASE}/audio/transcriptions`, {
