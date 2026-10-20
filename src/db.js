@@ -314,18 +314,16 @@ export async function pickQuestions(phone, { count = 1, subject = null, topic = 
   if (year) { params.push(String(year)); where.push(`q.year = $${params.length}`); }
 
   const rows = await q(
-    `SELECT q.id, la.created_at AS last_seen, r.due
+    `SELECT q.id, la.last_seen, r.due
      FROM questions q
-     LEFT JOIN LATERAL (
-       SELECT a.created_at FROM attempts a
-       WHERE a.phone = $1 AND a.question_id = q.id ORDER BY a.id DESC LIMIT 1
-     ) la ON true
+     LEFT JOIN (
+       SELECT question_id, MAX(created_at) AS last_seen FROM attempts WHERE phone = $1 GROUP BY question_id
+     ) la ON la.question_id = q.id
      LEFT JOIN reviews r ON r.phone = $1 AND r.question_id = q.id
      WHERE ${where.join(' AND ')}`,
     params
   );
 
-  const shuffle = (arr) => arr.map((v) => [Math.random(), v]).sort((a, b) => a[0] - b[0]).map((p) => p[1]);
   const today = localNow().date;
   const inReview = rows.filter((r) => r.due != null).sort((a, b) => a.due.localeCompare(b.due));
   // "revise": everything still in the review queue, most overdue first.
@@ -344,6 +342,16 @@ export async function pickQuestions(phone, { count = 1, subject = null, topic = 
     }
   }
   return (count === 1 ? picked : shuffle(picked)).map((r) => r.id);
+}
+
+/** Fisher–Yates. */
+function shuffle(arr) {
+  const a = [...arr];
+  for (let i = a.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [a[i], a[j]] = [a[j], a[i]];
+  }
+  return a;
 }
 
 // ---------- spaced repetition ----------
@@ -539,7 +547,6 @@ export async function imageDistractors(id, subject, answer, n = 3) {
   );
   const same = rows.filter((r) => r.same).map((r) => r.answer);
   const other = rows.filter((r) => !r.same).map((r) => r.answer);
-  const shuffle = (a) => a.sort(() => Math.random() - 0.5);
   return [...shuffle(same), ...shuffle(other)].filter((v, i, a) => a.indexOf(v) === i).slice(0, n);
 }
 

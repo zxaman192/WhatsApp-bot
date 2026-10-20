@@ -13,7 +13,7 @@ It works on WhatsApp and Telegram. Both use the same database, so a PDF you uplo
 | `test` | Pick a subject and length from menus. |
 | `test pharma 20`, `test pyq 2022`, `test 10 thyroid` | A custom test by subject, PYQ year or topic. Ends with a score, per-topic breakdown and the questions to review. |
 | `revise` / `due` | Spaced repetition: a question you get wrong comes back after 1, 3, 7 and 21 days. `revise` tests your review queue; `q` and `test` slip due reviews in too. |
-| `grand` / `grand 50` | A full mock spread across subjects like the real paper: 1.05 minutes per question, +4/−1, skip allowed, answers only at the end, then marks and a subject breakdown. |
+| `grand` / `grand 50` | Pick 200, 100 or 50 questions. A full mock spread across subjects like the real paper: 1.05 minutes per question, +4/−1, skip allowed, answers only at the end, then marks and a subject breakdown. |
 | Photo with caption `spot: <answer>` (or `spot derma: <answer>`) | Saves an image question (X-ray, specimen, lesion, instrument). `spot` quizzes you: A–D options once you have 4+ images, typed answers before that. |
 | A voice note | Transcribed and handled like a typed message, so you can ask questions by voice. Needs Gemini. |
 | A YouTube link, or a lecture recording (over 5 minutes or captioned "lecture") | Turned into notes and MCQs, filed like any upload. Needs Gemini. Recordings up to 14 MB. |
@@ -70,7 +70,7 @@ Tests: `npm test`
 
 ## Choosing an AI
 
-- **Gemini (free).** Get a key at aistudio.google.com → Get API key (no card) and set `GEMINI_API_KEY`. The free tier has daily request limits, and Google may use free-tier data to improve its products; check their terms before uploading anything private.
+- **Gemini (free).** Get a key at aistudio.google.com → Get API key (no card) and set `GEMINI_API_KEY`. The free tier allows about 20 requests a day per model, so the bot tries `GEMINI_MODEL` first and then each model in `GEMINI_FALLBACK_MODELS`, resting any model that is out of quota until it resets. When every model is out, practice still works, `explain` and `why` answer from your notes, and long PDFs pause and finish by themselves once the quota is back (upload jobs are saved in the database, so restarts don't lose them either). Google may use free-tier data to improve its products; check their terms before uploading anything private.
 - **Claude.** Set `ANTHROPIC_API_KEY` (console.anthropic.com, pay per use).
 - If both keys are set, Gemini is used unless `AI_PROVIDER=claude`.
 
