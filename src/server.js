@@ -71,6 +71,13 @@ app.post('/webhook', (req, res) => {
   res.sendStatus(200);
   for (const entry of req.body?.entry || []) {
     for (const change of entry.changes || []) {
+      // Meta accepts a reply first and reports a failed delivery later, here.
+      for (const st of change.value?.statuses || []) {
+        if (st.status === 'failed') {
+          const err = st.errors?.[0] || {};
+          console.warn(`WhatsApp reply to …${String(st.recipient_id).slice(-4)} failed: ${err.code || ''} ${err.title || ''} ${err.error_data?.details || err.message || ''}`.trim());
+        }
+      }
       for (const msg of change.value?.messages || []) {
         // Meta retries deliveries; ignore ones we've already handled.
         if (seen.has(msg.id)) continue;
