@@ -102,6 +102,33 @@ const SCHEMA = `
   );
   ALTER TABLE reviews ENABLE ROW LEVEL SECURITY;
   ALTER TABLE group_daily ENABLE ROW LEVEL SECURITY;
+
+  -- Upload jobs: long PDFs are read part by part and survive restarts and AI quota pauses.
+  CREATE TABLE IF NOT EXISTS upload_jobs (
+    id SERIAL PRIMARY KEY,
+    phone TEXT NOT NULL,
+    filename TEXT,
+    caption TEXT NOT NULL DEFAULT '',
+    data BYTEA,                          -- the file, deleted when the job finishes
+    source_id INT REFERENCES sources(id) ON DELETE SET NULL,
+    parts INT NOT NULL DEFAULT 1,
+    done_parts JSONB NOT NULL DEFAULT '[]',
+    summary JSONB NOT NULL DEFAULT '{}',
+    status TEXT NOT NULL DEFAULT 'running', -- running | paused | done | failed
+    resume_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ DEFAULT now()
+  );
+  ALTER TABLE upload_jobs ENABLE ROW LEVEL SECURITY;
+
+  ALTER TABLE notes ADD COLUMN IF NOT EXISTS hash TEXT;
+  CREATE UNIQUE INDEX IF NOT EXISTS idx_notes_hash ON notes(hash);
+  ALTER TABLE users ADD COLUMN IF NOT EXISTS buddy_code TEXT;
+  CREATE UNIQUE INDEX IF NOT EXISTS idx_users_buddy_code ON users(buddy_code);
+  CREATE INDEX IF NOT EXISTS idx_attempts_phone_time ON attempts(phone, created_at);
+  CREATE INDEX IF NOT EXISTS idx_attempts_question ON attempts(question_id);
+  CREATE INDEX IF NOT EXISTS idx_reviews_phone_due ON reviews(phone, due);
+  CREATE INDEX IF NOT EXISTS idx_users_buddy_group ON users(buddy_group) WHERE buddy_group IS NOT NULL;
+  CREATE INDEX IF NOT EXISTS idx_questions_origin ON questions(origin, subject);
 `;
 
 /** Connect and create tables. url: Postgres URL, 'memory' for an in-memory PGlite, or a PGlite data dir. */
@@ -210,15 +237,46 @@ export async function addQuestion(x) {
   return rows.length > 0;
 }
 
+/** Insert a note section; returns true if new, false if the same text was already filed under that subject. */
 export async function addNote(n) {
-  await q('INSERT INTO notes (subject, topic, content, source_id, page) VALUES ($1, $2, $3, $4, $5)', [
-    n.subject,
-    n.topic || 'General',
-    n.content,
-    n.sourceId ?? null,
-    n.page || null,
-  ]);
+  const norm = String(n.content).toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+  const hash = createHash('sha1').update(`${n.subject}|${norm}`).digest('hex');
+  const rows = await q(
+    `INSERT INTO notes (subject, topic, content, source_id, page, hash) VALUES ($1, $2, $3, $4, $5, $6)
+     ON CONFLICT (hash) DO NOTHING RETURNING id`,
+    [n.subject, n.topic || 'General', n.content, n.sourceId ?? null, n.page || null, hash]
+  );
+  return rows.length > 0;
 }
+
+/** Mark a date field (last_daily_date / last_weekly_date) as done today; false if it already was. */
+export async function claimDay(phone, field, date) {
+  if (!['last_daily_date', 'last_weekly_date'].includes(field)) throw new Error(`bad field ${field}`);
+  const rows = await q(`UPDATE users SET ${field} = $2 WHERE phone = $1 AND ${field} IS DISTINCT FROM $2 RETURNING phone`, [phone, date]);
+  return rows.length > 0;
+}
+
+// ---------- upload jobs ----------
+
+export async function createJob({ phone, filename, caption, data, sourceId, parts }) {
+  const r = await one(
+    `INSERT INTO upload_jobs (phone, filename, caption, data, source_id, parts) VALUES ($1, $2, $3, $4, $5, $6) RETURNING id`,
+    [phone, filename, caption || '', data, sourceId, parts]
+  );
+  return r.id;
+}
+
+export const getJob = (id) => one('SELECT * FROM upload_jobs WHERE id = $1', [id]);
+
+export async function updateJob(id, fields) {
+  const cols = Object.keys(fields);
+  const values = cols.map((c) => (['done_parts', 'summary'].includes(c) ? JSON.stringify(fields[c]) : fields[c]));
+  await q(`UPDATE upload_jobs SET ${cols.map((c, i) => `${c} = $${i + 1}`).join(', ')} WHERE id = $${cols.length + 1}`, [...values, id]);
+}
+
+/** Jobs to pick up: interrupted by a restart (running), or paused for AI quota and due to resume. */
+export const resumableJobs = () =>
+  q(`SELECT id FROM upload_jobs WHERE status = 'running' OR (status = 'paused' AND resume_at <= now()) ORDER BY id`);
 
 export function getQuestion(id) {
   return one(
@@ -327,7 +385,7 @@ export async function reviewCounts(phone) {
 export async function countQuestions({ subject = null, topic = null } = {}) {
   const r = await one(
     `SELECT COUNT(*)::int AS n FROM questions
-     WHERE ($1::text IS NULL OR subject = $1) AND ($2::text IS NULL OR topic ILIKE '%' || $2 || '%')`,
+     WHERE origin <> 'image' AND ($1::text IS NULL OR subject = $1) AND ($2::text IS NULL OR topic ILIKE '%' || $2 || '%')`,
     [subject, topic]
   );
   return r.n;
@@ -336,7 +394,7 @@ export async function countQuestions({ subject = null, topic = null } = {}) {
 export const bankSummary = () =>
   q(
     `SELECT subject, topic, COUNT(*)::int AS n, COUNT(*) FILTER (WHERE origin = 'pyq')::int AS pyq
-     FROM questions GROUP BY subject, topic ORDER BY subject, n DESC`
+     FROM questions WHERE origin <> 'image' GROUP BY subject, topic ORDER BY subject, n DESC`
   );
 
 export const notesSummary = () =>
@@ -361,9 +419,9 @@ export async function userStats(phone) {
     [phone]
   );
   const week = await one(
-    `SELECT COUNT(DISTINCT date(created_at))::int AS days FROM attempts
+    `SELECT COUNT(DISTINCT date(created_at AT TIME ZONE $2))::int AS days FROM attempts
      WHERE phone = $1 AND created_at >= now() - interval '7 days'`,
-    [phone]
+    [phone, config.timezone]
   );
   return { overall, bySubject, weakTopics, activeDaysThisWeek: week.days };
 }
@@ -384,13 +442,26 @@ const STOPWORDS = new Set(
     'explain tell me about where find show topic notes note question questions please can you do does did my').split(' ')
 );
 
-/** Meaningful words of a free-text query, for an OR-style full-text search. */
+// Short forms people type, expanded to the words the notes use.
+const SHORTHAND = {
+  doc: 'drug choice', moa: 'mechanism action', htn: 'hypertension', dm: 'diabetes', mi: 'myocardial infarction',
+  tb: 'tuberculosis', ckd: 'chronic kidney', aki: 'acute kidney', copd: 'obstructive pulmonary', cad: 'coronary',
+  chf: 'heart failure', cvs: 'cardiovascular', cns: 'nervous', gi: 'gastrointestinal', uti: 'urinary infection',
+  sle: 'lupus', ra: 'rheumatoid arthritis', ibd: 'inflammatory bowel', dka: 'ketoacidosis', pph: 'postpartum haemorrhage',
+  aml: 'myeloid leukemia', cml: 'myeloid leukemia', cll: 'lymphocytic leukemia',
+  sah: 'subarachnoid', mcq: '', mcqs: '', pyq: '', pyqs: '',
+};
+// Two-letter terms worth searching for (most two-letter words are noise).
+const SHORT_TERMS = new Set(['iv', 'im', 'hb', 'ct', 'mr', 'ms', 'ra', 'gh', 'pr', 'qt', 'st', 'pt', 'ph', 'k', 'na', 'ca', 'fe', 'cu', 'zn', 'ig', 'tb', 'hiv']);
+
+/** Meaningful words of a free-text query, for a full-text search. */
 export function searchTerms(text) {
   const words = String(text)
     .toLowerCase()
     .replace(/[^a-z0-9\s-]/g, ' ')
     .split(/[\s-]+/)
-    .filter((w) => w.length > 2 && !STOPWORDS.has(w));
+    .flatMap((w) => (w in SHORTHAND ? SHORTHAND[w].split(' ').filter(Boolean) : [w]))
+    .filter((w) => (w.length > 2 || SHORT_TERMS.has(w)) && !STOPWORDS.has(w));
   return [...new Set(words)].slice(0, 12);
 }
 
@@ -416,8 +487,8 @@ async function searchNotesTs(tq, { limit = 5, subject = null } = {}) {
   return q(
     `SELECT n.id, n.subject, n.topic, n.content, n.page, s.filename,
             ts_headline('english', n.content, to_tsquery('english', $1),
-                        'MaxWords=30, MinWords=12, StartSel=*, StopSel=*, MaxFragments=2, FragmentDelimiter=" … "') AS snippet,
-            ts_rank_cd(n.search, to_tsquery('english', $1)) AS rank
+                        'MaxWords=35, MinWords=15, StartSel="", StopSel="", MaxFragments=2, FragmentDelimiter=" … "') AS snippet,
+            ts_rank_cd(n.search, to_tsquery('english', $1), 1|32) AS rank
      FROM notes n LEFT JOIN sources s ON s.id = n.source_id
      WHERE n.search @@ to_tsquery('english', $1) ${subject ? 'AND n.subject = $3' : ''}
      ORDER BY rank DESC LIMIT $2`,
@@ -428,7 +499,7 @@ async function searchNotesTs(tq, { limit = 5, subject = null } = {}) {
 async function searchQuestionsTs(tq, { limit = 50 } = {}) {
   return q(
     `SELECT q.id, q.subject, q.topic, q.stem, q.origin, q.year, q.page, s.filename,
-            ts_rank_cd(q.search, to_tsquery('english', $1)) AS rank
+            ts_rank_cd(q.search, to_tsquery('english', $1), 1|32) AS rank
      FROM questions q LEFT JOIN sources s ON s.id = q.source_id
      WHERE q.search @@ to_tsquery('english', $1)
      ORDER BY rank DESC LIMIT $2`,

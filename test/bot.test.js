@@ -149,7 +149,7 @@ test('where shows notes and questions locations', async () => {
 test('explain without Claude returns matching note snippets', async () => {
   await say('explain ethosuximide');
   assert.match(lastText(), /From your notes/);
-  assert.match(lastText(), /\*Ethosuximide\*/i);
+  assert.match(lastText(), /Ethosuximide is the drug of choice/);
 });
 
 test('bank and stats', async () => {

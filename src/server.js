@@ -11,7 +11,8 @@ const app = express();
 app.use(express.json({ limit: '5mb', verify: (req, _res, buf) => (req.rawBody = buf) }));
 
 function validSignature(req) {
-  if (!config.whatsapp.appSecret) return true; // not configured: accept (only for local testing)
+  // Without the app secret anyone could post fake messages, so that's only allowed while nothing is really sent.
+  if (!config.whatsapp.appSecret) return config.dryRun;
   const header = req.get('x-hub-signature-256') || '';
   const expected = 'sha256=' + createHmac('sha256', config.whatsapp.appSecret).update(req.rawBody || '').digest('hex');
   return header.length === expected.length && timingSafeEqual(Buffer.from(header), Buffer.from(expected));
@@ -31,7 +32,10 @@ app.get('/webhook', (req, res) => {
 // Every incoming message lands here. Reply 200 at once; reading a big PDF can take minutes.
 const seen = new Set();
 app.post('/webhook', (req, res) => {
-  if (!validSignature(req)) return res.sendStatus(401);
+  if (!validSignature(req)) {
+    console.warn(config.whatsapp.appSecret ? 'WhatsApp webhook rejected: bad signature.' : 'WhatsApp webhook rejected: set WHATSAPP_APP_SECRET before going live.');
+    return res.sendStatus(401);
+  }
   res.sendStatus(200);
   for (const entry of req.body?.entry || []) {
     for (const change of entry.changes || []) {
@@ -57,6 +61,7 @@ app.post('/telegram', (req, res) => {
   console.log(`Telegram update: ${msg ? `${msg.type} from ${msg.from}` : 'ignored'}`);
   if (!msg || seen.has(msg.id)) return;
   seen.add(msg.id);
+  if (seen.size > 5000) seen.delete(seen.values().next().value);
   handleMessage(msg).catch((e) => console.error('handleMessage failed', e));
 });
 

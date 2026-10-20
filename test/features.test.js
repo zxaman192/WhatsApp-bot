@@ -176,7 +176,8 @@ test('grand test ends when time is up', async () => {
   const q = await openQuestion();
   await tap(`ans:${q.id}:${q.answer}`);
   assert.match(lastText(), /Time's up/);
-  assert.match(lastText(), /9 not reached/);
+  // The answer came in after the clock ran out, so it isn't scored.
+  assert.match(lastText(), /✅ 0 right · ❌ 0 wrong · ⏭ 0 skipped · 10 not reached/);
 });
 
 test('image questions: save with "spot:", typed answer, then multiple choice', async () => {

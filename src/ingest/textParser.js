@@ -27,7 +27,12 @@ function splitOptions(text) {
   if (seq.length < 4) return null;
   const options = seq.map((m, i) => {
     const start = m.index + m[0].length;
-    const end = i < 3 ? seq[i + 1].index : text.length;
+    let end = i < 3 ? seq[i + 1].index : text.length;
+    // The last option ends at a blank line, so a following paragraph (notes, a heading) isn't glued onto it.
+    if (i === 3) {
+      const gap = text.slice(start).search(/\n\s*\n/);
+      if (gap > 0) end = start + gap;
+    }
     return text.slice(start, end).trim();
   });
   return { before: text.slice(0, seq[0].index).trim(), options };
@@ -36,6 +41,17 @@ function splitOptions(text) {
 // A line made only of answer-key pairs: "1-b 2-c 3-a", "12. (d)", "1 b, 2 a".
 const KEY_LINE = /^\s*(?:\d{1,4}\s*[.)\-:]?\s*\(?[a-dA-D]\)?[\s,;|]*)+$/;
 const KEY_PAIR = /(\d{1,4})\s*[.)\-:]?\s*\(?([a-dA-D])\)?(?![a-zA-Z])/g;
+
+/** Answer-key lines anywhere in the text ("1-b 2-c …") → { "1": 1, "2": 2 }. */
+export function parseAnswerKey(text) {
+  const key = {};
+  for (const line of text.replace(/\r/g, '').split('\n')) {
+    if (KEY_LINE.test(line) && /\d/.test(line)) {
+      for (const k of line.matchAll(KEY_PAIR)) key[k[1]] = 'abcd'.indexOf(k[2].toLowerCase());
+    }
+  }
+  return key;
+}
 
 export function parseFormattedMcqs(text) {
   const lines = text.replace(/\r/g, '').split('\n');

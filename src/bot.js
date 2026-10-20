@@ -3,9 +3,10 @@ import * as wa from './messenger.js';
 import { answerCallback } from './telegram.js';
 import { config, isAllowed } from './config.js';
 import { SUBJECTS, EXAM_WEIGHT, matchSubject, findSubjectIn } from './subjects.js';
-import { ingest, formatSummary } from './ingest/index.js';
+import { AsyncLocalStorage } from 'node:async_hooks';
+import { ingest, formatSummary, runJob, whenText } from './ingest/index.js';
 import { classify } from './ingest/keywords.js';
-import { aiAvailable, mediaAvailable, explain as aiExplain, transcribe, flashcards as aiFlashcards } from './ingest/ai.js';
+import { aiAvailable, mediaAvailable, explain as aiExplain, explainQuestion, transcribe, flashcards as aiFlashcards, AiBusyError } from './ingest/ai.js';
 import { localNow, addDays, daysBetween } from './time.js';
 
 const LETTERS = ['A', 'B', 'C', 'D'];
@@ -21,7 +22,7 @@ Send a PDF, a photo of a page, or paste text (here or in the Telegram bot; both 
 *Practise*
 - *q*: one question now (*q pharma* for one subject)
 - *test*, *test pharma 20*, *test pyq 2022*, *test 10 thyroid*
-- *grand*: full 200-question mock, timed, +4/−1 (*grand 50* for a shorter one)
+- *grand*: timed mock like the real paper, +4/−1 (200, 100 or 50 questions)
 - *revise*: questions due for review; *due* shows how many
 - *spot*: an image question
 - *flash* / *flash pharma*: flashcards from your notes
@@ -58,7 +59,46 @@ async function sendQuestion(phone, q, header, { skip = false } = {}) {
 
 const clip = (s, n) => (s.length > n ? s.slice(0, n - 1) + '…' : s);
 const pct = (c, n) => (n ? Math.round((100 * c) / n) : 0);
-const shuffle = (arr) => arr.map((v) => [Math.random(), v]).sort((a, b) => a[0] - b[0]).map((p) => p[1]);
+/** Fisher–Yates. */
+function shuffle(arr) {
+  const a = [...arr];
+  for (let i = a.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [a[i], a[j]] = [a[j], a[i]];
+  }
+  return a;
+}
+
+/** Text plus up to 3 buttons. WhatsApp button messages hold 1024 characters, so longer text goes first on its own. */
+async function sendWithButtons(phone, text, buttons, prompt = 'What next?') {
+  if (text.length <= (wa.isTelegram(phone) ? 4000 : 1000)) return wa.sendButtons(phone, text, buttons);
+  await wa.sendText(phone, text);
+  return wa.sendButtons(phone, prompt, buttons);
+}
+
+const NEXT_BUTTONS = (qid) => [
+  { id: 'next', title: '➡️ Next' },
+  { id: `why:${qid}`, title: '🤔 Why' },
+  { id: `sim:${qid}`, title: '🔗 Similar' },
+];
+
+const EMPTY_BANK = 'Your question bank is empty. Send me a PDF, a photo of a page, or pasted text of notes or questions to fill it.';
+
+/** The part of a long note around the first place the query words appear. */
+export function excerptAround(content, query, size = 2500) {
+  if (content.length <= size) return content;
+  const lower = content.toLowerCase();
+  const hits = store.searchTerms(query).map((t) => lower.indexOf(t)).filter((i) => i >= 0);
+  const at = hits.length ? Math.min(...hits) : 0;
+  const start = Math.max(0, Math.min(at - Math.floor(size / 4), content.length - size));
+  return `${start ? '…' : ''}${content.slice(start, start + size)}${start + size < content.length ? '…' : ''}`;
+}
+
+/** A short line for when the AI can't answer right now. */
+const restingLine = (e) =>
+  e instanceof AiBusyError
+    ? `_The AI has used up its free quota for now${e.resetAt ? ` (back ${whenText(e.resetAt)})` : ''}, so here is what your notes say._`
+    : '_The AI could not answer just now, so here is what your notes say._';
 const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
 
 const where = (row) => {
@@ -79,10 +119,22 @@ function inWindow(user) {
 
 // ---------- practice ----------
 
+/** A test is running: offer to carry on or end it rather than silently dropping it. */
+async function testRunning(phone, user) {
+  const t = user.state.test;
+  if (!t) return false;
+  await wa.sendButtons(phone, `You're in the middle of ${t.grand ? 'a grand test' : `a test (${t.label})`}: question ${t.index + 1} of ${t.ids.length}.`, [
+    { id: 'tcont', title: '▶️ Continue' },
+    { id: 'tend', title: '⏹ End test' },
+  ]);
+  return true;
+}
+
 async function askSingle(phone, user, { subject = null, mode = 'single', qid = null, header = null } = {}) {
+  if (await testRunning(phone, user)) return false;
   const id = qid || (await store.pickQuestions(phone, { count: 1, subject }))[0];
   if (!id) {
-    await wa.sendText(phone, subject ? `No ${subject} questions yet. Send me some material first.` : 'Your question bank is empty. Send me a PDF, photo or text of notes or questions first.');
+    await wa.sendText(phone, subject ? `No ${subject} questions yet. Send me notes or questions on it and I'll add them.` : EMPTY_BANK);
     return false;
   }
   const q = await store.getQuestion(id);
@@ -92,6 +144,7 @@ async function askSingle(phone, user, { subject = null, mode = 'single', qid = n
 }
 
 async function startTest(phone, user, opts) {
+  if (await testRunning(phone, user)) return;
   const count = Math.min(Math.max(opts.count || 10, 1), 100);
   let filter = { subject: opts.subject, pyqOnly: opts.pyqOnly, year: opts.year, wrongOnly: opts.wrongOnly, ids: opts.ids || null };
   let label = [opts.wrongOnly ? 'Revision' : null, opts.subject, opts.pyqOnly || opts.year ? `PYQ${opts.year ? ' ' + opts.year : ''}` : null]
@@ -135,10 +188,12 @@ async function finishTest(phone, user, test) {
   if (test.wrong.length) {
     lines.push('', '*Review these*');
     for (const w of test.wrong.slice(0, 15)) lines.push(`- ${w}`);
-    lines.push('', 'Send *revise* to retry the ones you got wrong.');
   }
   await store.updateUser(phone, { state: { ...user.state, test: null, current: null } });
-  await wa.sendText(phone, lines.join('\n'));
+  const buttons = test.wrong.length
+    ? [{ id: 'revise', title: '🔁 Revise mistakes' }, { id: 'newtest', title: '📝 New test' }, { id: 'stats', title: '📊 Stats' }]
+    : [{ id: 'newtest', title: '📝 New test' }, { id: 'next', title: '➡️ One question' }, { id: 'stats', title: '📊 Stats' }];
+  await sendWithButtons(phone, lines.join('\n'), buttons);
 }
 
 async function handleAnswer(phone, user, qid, chosen) {
@@ -146,6 +201,10 @@ async function handleAnswer(phone, user, qid, chosen) {
   if (!cur || cur.qid !== qid) {
     await wa.sendText(phone, 'That question is already closed. Send *q* for a new one.');
     return;
+  }
+  // A late answer in a timed mock: the clock ran out before it came in.
+  if (cur.mode === 'grand' && user.state.test?.grand && Date.now() > user.state.test.endsAt) {
+    return finishGrand(phone, user, user.state.test, true);
   }
   const q = await store.getQuestion(qid);
   const correct = chosen === q.answer;
@@ -178,8 +237,7 @@ async function handleAnswer(phone, user, qid, chosen) {
     return sendQuestion(phone, await store.getQuestion(test.ids[test.index]), `Q ${test.index + 1}/${test.ids.length}`);
   }
   await store.updateUser(phone, { state });
-  lines.push('', 'Send *q* for another, *why* to go deeper, or *similar* for questions like this.');
-  await wa.sendText(phone, lines.join('\n'));
+  await sendWithButtons(phone, lines.join('\n'), NEXT_BUTTONS(qid));
 }
 
 
@@ -192,11 +250,12 @@ const timeLeft = (ms) => {
 
 /** A full mock: questions spread across subjects like the real paper, 1.05 min per question, +4/−1. */
 async function startGrand(phone, user, n) {
+  if (await testRunning(phone, user)) return;
   const total = Math.min(Math.max(n || 200, 10), 200);
   const counts = {};
   for (const r of await store.bankSummary()) counts[r.subject] = (counts[r.subject] || 0) + r.n;
   const subjects = SUBJECTS.filter((s) => counts[s]);
-  if (!subjects.length) return wa.sendText(phone, 'Your question bank is empty. Send me some material first.');
+  if (!subjects.length) return wa.sendText(phone, EMPTY_BANK);
   const sumW = subjects.reduce((a, s) => a + EXAM_WEIGHT[s], 0);
   let ids = [];
   for (const s of subjects) {
@@ -210,6 +269,7 @@ async function startGrand(phone, user, n) {
     }
   }
   ids = shuffle(ids.slice(0, total));
+  if (!ids.length) return wa.sendText(phone, EMPTY_BANK);
   const minutes = Math.round(ids.length * 1.05);
   const now = Date.now();
   const test = { grand: true, ids, index: 0, correct: 0, wrongN: 0, skipped: 0, perSubject: {}, label: 'Grand test', startedAt: now, endsAt: now + minutes * 60000, minutes };
@@ -264,29 +324,55 @@ async function finishGrand(phone, user, test, timeUp = false) {
     lines.push('', '*By subject* (weakest first)');
     for (const [s, v] of subjects) lines.push(`- ${s}: ${4 * v.c - v.w} marks (${v.c}/${v.n})`);
   }
-  if (test.wrongN) lines.push('', 'Every question you got wrong is now in your review queue. Send *revise* to go over them.');
+  if (test.wrongN) lines.push('', 'Every question you got wrong is now in your review queue.');
   await store.updateUser(phone, { state: { ...user.state, test: null, current: null } });
-  await wa.sendText(phone, lines.join('\n'));
+  await sendWithButtons(
+    phone,
+    lines.join('\n'),
+    test.wrongN
+      ? [{ id: 'revise', title: '🔁 Revise mistakes' }, { id: 'coach', title: '🎯 Coach' }, { id: 'stats', title: '📊 Stats' }]
+      : [{ id: 'coach', title: '🎯 Coach' }, { id: 'stats', title: '📊 Stats' }]
+  );
 }
 
 // ---------- notes: explain / where ----------
 
-async function explain(phone, query) {
-  const notes = await store.searchNotes(query, { limit: 5 });
+async function explain(phone, user, query) {
+  wa.typing(phone);
+  const subject = findSubjectIn(query);
+  let notes = await store.searchNotes(query, { limit: 5, subject });
+  if (!notes.length && subject) notes = await store.searchNotes(query, { limit: 5 });
   const qs = await store.searchQuestions(query, { limit: 300 });
-  const tail = qs.length ? `\n\n📝 ${qs.length} related question${qs.length > 1 ? 's' : ''} in your bank. Send *test ${query.slice(0, 40)}* to practise them.` : '';
+  const sources = notes.length ? `\n\n📚 *Sources*\n${notes.map((n, i) => `[${i + 1}] ${where(n)}`).join('\n')}` : '';
+  const finish = async (text) => {
+    if (!qs.length) return wa.sendText(phone, text);
+    await store.updateUser(phone, { state: { ...user.state, related: qs.slice(0, 50).map((h) => h.id) } });
+    return sendWithButtons(phone, `${text}\n\n📝 ${plural(qs.length, 'related question')} in your bank.`, [{ id: 'reltest', title: '📝 Practise these' }], 'Practise them?');
+  };
+  const snippets = () => notes.map((n, i) => `*[${i + 1}] ${where(n)}*\n${n.snippet}`).join('\n\n');
 
   if (!aiAvailable()) {
-    if (!notes.length) return wa.sendText(phone, `Nothing about "${query}" in your notes yet.${tail}`);
-    const body = notes.map((n, i) => `*[${i + 1}] ${where(n)}*\n${n.snippet}`).join('\n\n');
-    return wa.sendText(phone, `From your notes:\n\n${body}${tail}`);
+    if (!notes.length) return finish(`Nothing about "${clip(query, 60)}" in your notes yet.`);
+    return finish(`From your notes:\n\n${snippets()}`);
   }
-
-  await wa.sendText(phone, notes.length ? '🔎 Looking through your notes…' : '🔎 Nothing in your notes on that yet, answering from standard sources…');
-  const excerpts = notes.map((n) => ({ label: where(n), text: n.content.slice(0, 3000) }));
-  const answer = await aiExplain(query, excerpts);
-  const sources = notes.length ? `\n\n📚 *Sources*\n${notes.map((n, i) => `[${i + 1}] ${where(n)}`).join('\n')}` : '';
-  await wa.sendText(phone, `${answer}${sources}${tail}`);
+  if (!notes.length) await wa.sendText(phone, '🔎 Nothing in your notes on that yet, answering from standard sources…');
+  const excerpts = notes.map((n) => ({ label: where(n), text: excerptAround(n.content, query) }));
+  // Matching questions from the bank help too: their explanations are often the best summary of a fact.
+  for (const h of qs.slice(0, 3)) {
+    const q = await store.getQuestion(h.id);
+    excerpts.push({
+      label: `Q-bank: ${q.subject} › ${q.topic}${q.year ? ` (PYQ ${q.year})` : ''}`,
+      text: `${q.stem}\nAnswer: ${q.options[q.answer]}${q.explanation ? `\n${q.explanation}` : ''}`,
+    });
+  }
+  try {
+    const answer = await aiExplain(query, excerpts);
+    return finish(`${answer}${sources}`);
+  } catch (e) {
+    console.error('Explain failed:', e.message);
+    if (!notes.length) return finish(e instanceof AiBusyError ? `${restingLine(e).replace(', so here is what your notes say', '')}\nNothing about "${clip(query, 60)}" in your notes either. Try again later.` : 'Sorry, I could not answer that just now. Please try again.');
+    return finish(`${restingLine(e)}\n\n${snippets()}`);
+  }
 }
 
 async function whereIs(phone, query) {
@@ -317,11 +403,31 @@ async function whereIs(phone, query) {
   await wa.sendText(phone, lines.join('\n'));
 }
 
-async function why(phone, user) {
-  const qid = user.state.lastQid;
+async function why(phone, user, qid = user.state.lastQid) {
   if (!qid) return wa.sendText(phone, 'Answer a question first, then send *why*.');
   const q = await store.getQuestion(qid);
-  return explain(phone, `${q.stem} Answer: ${q.options[q.answer]}. Explain why this is correct and why the other options (${q.options.filter((_, i) => i !== q.answer).join('; ')}) are wrong.`);
+  if (!q) return wa.sendText(phone, 'That question is no longer in your bank.');
+  wa.typing(phone);
+  const query = `${q.stem} ${q.options[q.answer]}`;
+  let notes = await store.searchNotes(query, { limit: 4, subject: q.subject });
+  if (!notes.length) notes = await store.searchNotes(query, { limit: 3 });
+  const sources = notes.length ? `\n\n📚 *Sources*\n${notes.map((n, i) => `[${i + 1}] ${where(n)}`).join('\n')}` : '';
+  const buttons = [{ id: 'next', title: '➡️ Next' }, { id: `sim:${qid}`, title: '🔗 Similar' }];
+  const offline = () => {
+    const lines = [`*${LETTERS[q.answer]}. ${q.options[q.answer]}*`];
+    if (q.explanation) lines.push('', q.explanation);
+    if (notes.length) lines.push('', ...notes.slice(0, 2).map((n, i) => `*[${i + 1}] ${where(n)}*\n${n.snippet}`));
+    if (!q.explanation && !notes.length) lines.push('', 'No explanation stored and nothing on it in your notes yet.');
+    return lines.join('\n');
+  };
+  if (!aiAvailable()) return sendWithButtons(phone, offline(), buttons);
+  try {
+    const answer = await explainQuestion(q, notes.map((n) => ({ label: where(n), text: excerptAround(n.content, query) })));
+    return sendWithButtons(phone, `${answer}${sources}`, buttons);
+  } catch (e) {
+    console.error('Why failed:', e.message);
+    return sendWithButtons(phone, `${restingLine(e).replace('what your notes say', 'what I have')}\n\n${offline()}`, buttons);
+  }
 }
 
 // ---------- info ----------
@@ -334,14 +440,14 @@ async function showBank(phone) {
   for (const r of rows) (bySubject[r.subject] ??= []).push(r);
   const noteMap = Object.fromEntries(notes.map((n) => [n.subject, n]));
   const total = rows.reduce((s, r) => s + r.n, 0);
-  const lines = [`📚 *Your bank: ${total} questions*`];
+  const lines = [`📚 *Your bank: ${plural(total, 'question')}*`];
   for (const s of SUBJECTS) {
     const topics = bySubject[s];
     const n = noteMap[s];
     if (!topics && !n) continue;
     const count = topics ? topics.reduce((a, r) => a + r.n, 0) : 0;
     const pyq = topics ? topics.reduce((a, r) => a + r.pyq, 0) : 0;
-    lines.push('', `*${s}*: ${count} Q${pyq ? ` (${pyq} PYQ)` : ''}${n ? ` · notes on ${n.topics} topics` : ''}`);
+    lines.push('', `*${s}*: ${count} Q${pyq ? ` (${pyq} PYQ)` : ''}${n ? ` · notes on ${plural(n.topics, 'topic')}` : ''}`);
     if (topics) lines.push(topics.slice(0, 6).map((t) => `${t.topic} ${t.n}`).join(' · ') + (topics.length > 6 ? ` · +${topics.length - 6} more` : ''));
   }
   await wa.sendText(phone, lines.join('\n'));
@@ -356,7 +462,7 @@ async function showStats(phone) {
     `📊 *Your progress*`,
     `Answered ${s.overall.n}, correct ${s.overall.c} (${pct(s.overall.c, s.overall.n)})`,
     `Active ${s.activeDaysThisWeek}/7 days this week · 🔥 ${plural(st, 'day')} streak`,
-    `🔁 ${rc.due} due for review today, ${rc.total} in your review queue`,
+    rc.total ? `🔁 ${rc.due} due for review today, ${rc.total} in your review queue` : '🔁 Review queue empty',
   ];
   lines.push('', '*By subject*');
   for (const r of s.bySubject) lines.push(`- ${r.subject}: ${r.c}/${r.n} (${pct(r.c, r.n)})`);
@@ -508,10 +614,17 @@ async function handleAudio(phone, msg, download) {
   // Short voice notes are questions; anything long (or captioned "lecture") is study material.
   const lecture = /lecture|class|notes/i.test(caption) || (media.duration || 0) > 300 || buffer.length > 1024 * 1024;
   if (lecture) return handleUpload(phone, { buffer, mimeType: mime, filename: 'lecture recording', caption });
-  const text = await transcribe(buffer, mime);
+  wa.typing(phone);
+  let text;
+  try {
+    text = await transcribe(buffer, mime);
+  } catch (e) {
+    if (!(e instanceof AiBusyError)) throw e;
+    return wa.sendText(phone, `🎙️ The AI has used up its free quota for now, so I can't listen to voice notes until ${e.resetAt ? whenText(e.resetAt).replace(/^at /, '') : 'later'}. Type your question instead.`);
+  }
   if (!text) return wa.sendText(phone, "I couldn't make out any words in that voice note.");
   await wa.sendText(phone, `🎙️ _"${clip(text, 300)}"_`);
-  return handleMessage({ ...msg, type: 'text', text: { body: text } }, { download });
+  return handle({ ...msg, type: 'text', text: { body: text } }, { download });
 }
 
 const YOUTUBE = /https?:\/\/(?:www\.|m\.)?(?:youtube\.com\/(?:watch\?\S*v=|shorts\/|live\/)|youtu\.be\/)[\w-]+\S*/i;
@@ -669,6 +782,7 @@ function parseSubjectTopic(arg) {
 async function similar(phone, user) {
   if (!user.state.lastQid) return wa.sendText(phone, 'Answer a question first, then send *similar*.');
   const q = await store.getQuestion(user.state.lastQid);
+  if (!q) return wa.sendText(phone, 'That question is no longer in your bank. Send *q* for a new one.');
   const hits = await store.similarQuestions(q, 5);
   if (!hits.length) return wa.sendText(phone, 'No similar questions in your bank yet.');
   await store.updateUser(phone, { state: { ...user.state, similar: hits.map((h) => h.id) } });
@@ -913,24 +1027,72 @@ async function leaderboard(phone, user) {
 
 // ---------- uploads ----------
 
-async function handleUpload(phone, { buffer, mimeType, filename, caption }) {
-  await wa.sendText(phone, `📥 Got ${filename ? `*${filename}*` : 'it'}. Reading and sorting it now; big files can take a few minutes.`);
-  // Render's free plan sleeps after 15 idle minutes, which would kill a long upload; ping ourselves meanwhile.
-  const keepAwake = config.publicUrl
-    ? setInterval(() => fetch(`${config.publicUrl.replace(/\/$/, '')}/health`).catch(() => {}), 4 * 60 * 1000)
-    : null;
-  try {
-    const summary = await ingest({
-      buffer,
-      mimeType,
-      filename,
-      caption,
-      addedBy: phone,
-      onProgress: (msg) => wa.sendText(phone, msg).catch((e) => console.error('Progress message failed:', e.message)),
-    });
-    await wa.sendText(phone, formatSummary(summary, filename));
-  } finally {
-    clearInterval(keepAwake);
+// Render's free plan sleeps after 15 idle minutes, which would kill a long upload; ping ourselves meanwhile.
+function keepAwake() {
+  if (!config.publicUrl) return () => {};
+  const t = setInterval(() => fetch(`${config.publicUrl.replace(/\/$/, '')}/health`).catch(() => {}), 4 * 60 * 1000);
+  return () => clearInterval(t);
+}
+
+const progressTo = (phone) => (msg) => wa.sendText(phone, msg).catch((e) => console.error('Progress message failed:', e.message));
+
+const UPLOAD_BUTTONS = [
+  { id: 'next', title: '➡️ Practise' },
+  { id: 'bank', title: '📚 Bank' },
+];
+
+// Uploads can take many minutes, so they run outside the per-user lock: the user can practise meanwhile.
+const background = new AsyncLocalStorage();
+function afterLock(work) {
+  const later = background.getStore();
+  if (!later) return work;
+  later.push(work);
+}
+
+function handleUpload(phone, { buffer, mimeType, filename, caption }) {
+  return afterLock(
+    (async () => {
+      const stop = keepAwake();
+      try {
+        await wa.sendText(phone, `📥 Got ${filename ? `*${filename}*` : 'it'}. Reading and sorting it now; big files can take a few minutes.`);
+        wa.typing(phone);
+        const summary = await ingest({ buffer, mimeType, filename, caption, addedBy: phone, onProgress: progressTo(phone) });
+        const text = formatSummary(summary, filename);
+        if (summary.questions) await sendWithButtons(phone, text, UPLOAD_BUTTONS, 'Ready to practise?');
+        else await wa.sendText(phone, text);
+      } catch (e) {
+        console.error('Upload failed', e);
+        await wa.sendText(phone, `Sorry, I couldn't read ${filename ? `*${filename}*` : 'that'}: ${clip(String(e.message || e), 200)}`).catch(() => {});
+      } finally {
+        stop();
+      }
+    })()
+  );
+}
+
+/** Carry on with uploads interrupted by a restart or paused for AI quota (called by the scheduler). */
+export async function resumeJobs() {
+  for (const { id } of await store.resumableJobs()) {
+    const job = await store.getJob(id);
+    if (!job?.data || !isAllowed(job.phone)) {
+      await store.updateJob(id, { status: 'failed', data: null });
+      continue;
+    }
+    const stop = keepAwake();
+    try {
+      console.log(`Resuming upload ${id} (${job.filename}), ${(job.done_parts || []).length}/${job.parts} parts done`);
+      const summary = await runJob(id, { onProgress: progressTo(job.phone) });
+      if (!summary) continue; // already running
+      if (summary.paused && job.status === 'paused') continue; // still no quota; it tells the user only once
+      const text = formatSummary(summary, job.filename);
+      await wa.sendText(job.phone, summary.paused ? text : `📄 Finished reading *${job.filename}*.\n\n${text}`);
+    } catch (e) {
+      console.error(`Upload ${id} failed:`, e);
+      await store.updateJob(id, { status: 'failed', data: null }).catch(() => {});
+      await wa.sendText(job.phone, `Sorry, I couldn't finish reading *${job.filename}*: ${clip(String(e.message || e), 200)}`).catch(() => {});
+    } finally {
+      stop();
+    }
   }
 }
 
@@ -947,7 +1109,31 @@ const looksLikeMaterial = (text) => text.length > 500 || (/\n\s*\(?[aA]\s*[).]/.
  * Handle one inbound WhatsApp message (the `messages[i]` object from the webhook).
  * `download(mediaId)` is injectable for tests.
  */
-export async function handleMessage(msg, { download = (id) => wa.downloadMedia(msg.from, id) } = {}) {
+export async function handleMessage(msg, opts = {}) {
+  const later = [];
+  await background.run(later, () => withLock(msg.from, () => handle(msg, opts)));
+  await Promise.all(later);
+}
+
+// One message at a time per user, so two quick taps can't both answer the same question or clobber each other's state.
+const queues = new Map();
+function withLock(key, fn) {
+  const run = (queues.get(key) || Promise.resolve()).then(fn, fn);
+  const tail = run.catch(() => {});
+  queues.set(key, tail);
+  tail.then(() => queues.get(key) === tail && queues.delete(key));
+  return run;
+}
+
+const ONBOARDING = (name) => `👋 Hi${name ? ` ${name}` : ''}! I'm your NEET PG study partner.
+
+*1.* Send me your material: a PDF, a photo of a page, or pasted text. Notes, question banks and PYQs all work; I sort everything by subject and topic.
+*2.* Practise: *q* for one question, *test* for a test, *grand* for a timed mock.
+*3.* Ask me anything, e.g. "DOC for absence seizures?", and I answer from your notes.
+
+Every morning I send a question of the day. Send *help* for everything I can do.`;
+
+async function handle(msg, { download = (id) => wa.downloadMedia(msg.from, id) } = {}) {
   const phone = msg.from;
   if (msg.callbackId) answerCallback(msg.callbackId);
   if (!isAllowed(phone)) {
@@ -957,15 +1143,21 @@ export async function handleMessage(msg, { download = (id) => wa.downloadMedia(m
     }
     return;
   }
-  const user = await store.getUser(phone);
-  const firstContact = !user.last_inbound_at;
-  // A brand-new user starts getting the daily question tomorrow, not a minute after saying hi.
-  await store.updateUser(phone, {
-    last_inbound_at: new Date().toISOString(),
-    ...(firstContact ? { last_daily_date: localNow().date } : {}),
-  });
-
   try {
+    const user = await store.getUser(phone);
+    const firstContact = !user.last_inbound_at;
+    // A brand-new user starts getting the daily question tomorrow, not a minute after saying hi.
+    const name = !user.name && msg.firstName ? String(msg.firstName).slice(0, 30) : null;
+    await store.updateUser(phone, {
+      last_inbound_at: new Date().toISOString(),
+      ...(firstContact ? { last_daily_date: localNow().date } : {}),
+      ...(name ? { name } : {}),
+    });
+    if (name) user.name = name;
+    if (firstContact && msg.type === 'text' && /^(hi|hello|hey|start|help|menu)\b/i.test(msg.text?.body || '')) {
+      return await wa.sendText(phone, ONBOARDING(user.name));
+    }
+
     // Uploads
     if (msg.type === 'audio' || msg.type === 'video') return await handleAudio(phone, msg, download);
     if (msg.type === 'document' || msg.type === 'image') {
@@ -1016,7 +1208,32 @@ export async function handleMessage(msg, { download = (id) => wa.downloadMedia(m
       if (kind === 'pflash') return await startFlash(phone, user, { subject: a });
       if (kind === 'phy') return await showHighYield(phone, a);
       if (kind === 'grand') return await startGrand(phone, user, 200);
+      if (kind === 'gstart') return await startGrand(phone, user, Number(a) || 200);
       if (kind === 'revise') return await startTest(phone, user, { wrongOnly: true, count: 20 });
+      if (kind === 'next') return await askSingle(phone, user);
+      if (kind === 'why') return await why(phone, user, Number(a) || undefined);
+      if (kind === 'sim') return await similar(phone, { ...user, state: { ...user.state, lastQid: Number(a) || user.state.lastQid } });
+      if (kind === 'newtest') return (await testRunning(phone, user)) || (await testPicker(phone));
+      if (kind === 'stats') return await showStats(phone);
+      if (kind === 'help') return await wa.sendText(phone, HELP);
+      if (kind === 'bank') return await showBank(phone);
+      if (kind === 'coach') return await coach(phone, user);
+      if (kind === 'reltest') {
+        const ids = user.state.related || [];
+        if (!ids.length) return await wa.sendText(phone, 'Ask me about a topic first.');
+        return await startTest(phone, user, { ids, count: Math.min(ids.length, 20), label: 'Related questions' });
+      }
+      if (kind === 'tcont') {
+        const t = user.state.test;
+        if (!t || !user.state.current) return await wa.sendText(phone, 'No test is running. Send *test* to start one.');
+        if (t.grand) return await sendGrandQuestion(phone, t);
+        return await sendQuestion(phone, await store.getQuestion(user.state.current.qid), `Q ${t.index + 1}/${t.ids.length}`);
+      }
+      if (kind === 'tend') {
+        if (user.state.test?.grand) return await finishGrand(phone, user, user.state.test);
+        if (user.state.test) return await finishTest(phone, user, user.state.test);
+        return await wa.sendText(phone, 'No test is running.');
+      }
     }
     // Quick-reply button on the daily template
     if (msg.type === 'button') return await dailyQuestion(phone, user);
@@ -1054,8 +1271,16 @@ export async function handleMessage(msg, { download = (id) => wa.downloadMedia(m
         if (user.exam_date) return await showToday(phone, user);
         return await wa.sendText(phone, 'When is your exam? Send it like *exam 15-01-2027* and I will plan your days.');
       }
-      case 'grand': case 'mock': case 'fullmock':
-        return await startGrand(phone, user, Number(restWords.find((w) => /^\d+$/.test(w))) || 200);
+      case 'grand': case 'mock': case 'fullmock': {
+        const n = Number(restWords.find((w) => /^\d+$/.test(w)));
+        if (n) return await startGrand(phone, user, n);
+        if (await testRunning(phone, user)) return;
+        return await wa.sendButtons(phone, '🏆 *Grand test*: timed like the real paper (1.05 min per question), +4/−1. How long?', [
+          { id: 'gstart:200', title: '200 Q · 3.5 h' },
+          { id: 'gstart:100', title: '100 Q · 1h 45m' },
+          { id: 'gstart:50', title: '50 Q · 53 min' },
+        ]);
+      }
       case 'plan': case 'schedule':
         return await showPlan(phone, user, rest);
       case 'today':
@@ -1107,8 +1332,11 @@ export async function handleMessage(msg, { download = (id) => wa.downloadMedia(m
         if (!rest) return await wa.sendText(phone, 'What should I look for? e.g. *where thyroid storm*');
         return await whereIs(phone, rest.replace(/^(is|are)\s+/i, ''));
       case 'explain': case 'notes': case 'revise-topic': case 'teach':
-        if (!rest) return await why(phone, user);
-        return await explain(phone, rest.replace(/^(me\s+)?(about\s+)?/i, ''));
+        if (!rest) {
+          if (user.state.lastQid) return await why(phone, user);
+          return await wa.sendText(phone, 'What should I explain? For example: *explain thyroid storm*, or just ask "DOC for absence seizures?"');
+        }
+        return await explain(phone, user, rest.replace(/^(me\s+)?(about\s+)?/i, ''));
     }
 
     // A typed answer to an image question.
@@ -1120,17 +1348,32 @@ export async function handleMessage(msg, { download = (id) => wa.downloadMedia(m
     if (looksLikeMaterial(text)) {
       return await handleUpload(phone, { buffer: Buffer.from(text, 'utf8'), mimeType: 'text/plain', filename: 'pasted text', caption: '' });
     }
+    // Too short or no real words ("?", "ok", an emoji): not a question worth searching for.
+    if (!store.searchTerms(text).length) {
+      if (/^(ok|okay|k|thanks|thank you|thx|ty|cool|nice|great|👍|🙏)\W*$/i.test(text)) return await wa.sendText(phone, '👍');
+      return await wa.sendButtons(phone, "I didn't catch that. Ask me a medical question (e.g. \"DOC for absence seizures?\"), send study material, or pick one:", [
+        { id: 'next', title: '➡️ A question' },
+        { id: 'newtest', title: '📝 A test' },
+        { id: 'help', title: '📖 Help' },
+      ]);
+    }
     // Anything else is a question for the notes.
-    return await explain(phone, text);
+    return await explain(phone, user, text);
   } catch (err) {
     console.error('Error handling message', err);
-    await wa.sendText(phone, `Sorry, something went wrong: ${err.message}`).catch((e) => console.error('Could not send the error reply:', e.message));
+    const reply =
+      err instanceof AiBusyError
+        ? `The AI has used up its free quota for now${err.resetAt ? ` and is back ${whenText(err.resetAt)}` : ''}. Practice (*q*, *test*) still works.`
+        : 'Sorry, something went wrong on my side. Please try again in a moment.';
+    await wa.sendText(phone, reply).catch((e) => console.error('Could not send the error reply:', e.message));
   }
 }
 
 /** Send today's question to one user (called by the scheduler). */
 export async function sendDaily(phone) {
   const user = await store.getUser(phone);
+  // Mid-test, a daily question would cut into the test; they're studying anyway.
+  if (user.state.test) return false;
   // Telegram has no 24-hour rule; WhatsApp does.
   if (wa.isTelegram(phone) || inWindow(user)) {
     await dailyQuestion(phone, user);

@@ -36,7 +36,12 @@ export const config = {
   aiProvider: (env.AI_PROVIDER || '').toLowerCase(),
   gemini: {
     apiKey: env.GEMINI_API_KEY || '',
-    model: env.GEMINI_MODEL || 'gemini-3.8-flash',
+    model: env.GEMINI_MODEL || 'gemini-3.6-flash',
+    // Tried in order when the main model is out of free quota or overloaded (each model has its own quota).
+    fallbackModels: (env.GEMINI_FALLBACK_MODELS || 'gemini-3.5-flash,gemini-3-flash-preview,gemini-3.7-flash,gemini-3.8-flash,gemini-3.5-flash-lite,gemini-flash-lite-latest')
+      .split(',')
+      .map((m) => m.trim())
+      .filter(Boolean),
   },
   anthropic: {
     apiKey: env.ANTHROPIC_API_KEY || '',

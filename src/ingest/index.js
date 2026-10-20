@@ -1,26 +1,33 @@
 import { PDFDocument } from 'pdf-lib';
 import * as store from '../db.js';
+import { config } from '../config.js';
 import { SUBJECTS, findSubjectIn } from '../subjects.js';
-import { parseFormattedMcqs } from './textParser.js';
+import { parseFormattedMcqs, parseAnswerKey } from './textParser.js';
 import { classify } from './keywords.js';
 import { imageBlock, pdfBlock, textBlock } from './claude.js';
-import { aiAvailable, extract, mediaAvailable } from './ai.js';
+import { aiAvailable, extract, mediaAvailable, AiBusyError } from './ai.js';
 
-const PAGES_PER_CHUNK = 15;
+const PAGES_PER_CHUNK = 20;
 const PARALLEL_PARTS = 3;
 const TEXT_CHUNK_CHARS = 40000;
 const IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'image/gif'];
 
-/** Split a PDF into chunks of N pages. Yields { buffer, firstPage }. */
-export async function* pdfChunks(buffer) {
+/** Split a PDF into chunks of N pages. Yields { buffer, firstPage, lastPage, total }. */
+export async function* pdfChunks(buffer, size = 15) {
   const src = await PDFDocument.load(buffer, { ignoreEncryption: true });
   const total = src.getPageCount();
-  for (let start = 0; start < total; start += PAGES_PER_CHUNK) {
-    const out = await PDFDocument.create();
-    const idx = [...Array(Math.min(PAGES_PER_CHUNK, total - start)).keys()].map((i) => start + i);
-    for (const p of await out.copyPages(src, idx)) out.addPage(p);
-    yield { buffer: Buffer.from(await out.save()), firstPage: start + 1, lastPage: start + idx.length, total };
+  for (let start = 1; start <= total; start += size) {
+    const last = Math.min(total, start + size - 1);
+    yield { buffer: await subPdf(src, start, last), firstPage: start, lastPage: last, total };
   }
+}
+
+/** Pages from..to (1-based, inclusive) of a loaded PDF as a new PDF. */
+async function subPdf(src, from, to) {
+  const out = await PDFDocument.create();
+  const idx = Array.from({ length: to - from + 1 }, (_, i) => from - 1 + i);
+  for (const p of await out.copyPages(src, idx)) out.addPage(p);
+  return Buffer.from(await out.save());
 }
 
 function textChunks(text) {
@@ -51,11 +58,71 @@ function validQuestion(q) {
   );
 }
 
+const canon = (t) => String(t).toLowerCase().replace(/&/g, 'and').replace(/[^a-z0-9]+/g, ' ').replace(/\b(\w{3,}?)s\b/g, '$1').trim();
+const titleCase = (t) => t.replace(/\b([a-z])/g, (c) => c.toUpperCase());
+
+/**
+ * Saves AI or parser results: validates questions, normalises PYQ years and topic names (so parallel
+ * parts don't create "ANS" and "Autonomic Nervous System"), applies a file-wide answer key, and tallies.
+ */
+function makeSaver({ sourceId, summary, topics, answerKey = {} }) {
+  const tally = (subject, topic, field) => {
+    const s = (summary.bySubject[subject] ??= {});
+    const t = (s[topic] ??= { questions: 0, notes: 0 });
+    t[field]++;
+  };
+  const topicFor = (subject, raw) => {
+    const name = String(raw || '').trim() || 'General';
+    const known = (topics[subject] ??= []);
+    const hit = known.find((k) => canon(k) === canon(name));
+    if (hit) return hit;
+    const fresh = /[A-Z]/.test(name.slice(1)) ? name : titleCase(name);
+    known.push(fresh);
+    return fresh;
+  };
+  return async (result, pageOffset = 0) => {
+    for (const q of result.questions || []) {
+      if (!validQuestion(q)) { summary.skipped++; continue; }
+      const topic = topicFor(q.subject, q.topic);
+      let answer = q.answer_index;
+      let checked = Boolean(q.answer_given_in_source);
+      const keyed = q.number != null && answerKey[String(q.number).replace(/\D/g, '')];
+      if (keyed != null && keyed !== false && keyed >= 0) { answer = keyed; checked = true; }
+      if (/^\s*disputed key/i.test(q.explanation || '')) checked = false;
+      const year = (String(q.year || '').match(/(19|20)\d{2}/) || [''])[0];
+      const isNew = await store.addQuestion({
+        subject: q.subject,
+        topic,
+        stem: q.stem.trim(),
+        options: q.options.map((o) => String(o).trim()),
+        answer,
+        explanation: q.explanation || '',
+        year,
+        exam: String(q.exam || '').trim(),
+        answerChecked: checked,
+        origin: year || q.exam ? 'pyq' : q.origin || 'bank',
+        sourceId,
+        page: q.page > 0 ? q.page + pageOffset : null,
+      });
+      if (isNew) { summary.questions++; tally(q.subject, topic, 'questions'); } else summary.duplicates++;
+    }
+    for (const n of result.notes || []) {
+      if (!SUBJECTS.includes(n.subject) || !n.content?.trim()) continue;
+      const topic = topicFor(n.subject, n.topic);
+      const isNew = await store.addNote({ subject: n.subject, topic, content: n.content.trim(), sourceId, page: n.page > 0 ? n.page + pageOffset : null });
+      if (isNew) { summary.notes++; tally(n.subject, topic, 'notes'); } else summary.duplicates++;
+    }
+  };
+}
+
+const newSummary = () => ({ questions: 0, duplicates: 0, notes: 0, bySubject: {}, skipped: 0, errors: [], usedAi: false });
+
 /**
  * Read an upload, split it into questions and notes, sort each into subject → topic and save.
  *
  * input: { buffer, mimeType, filename, caption, addedBy, onProgress? }
- * Returns a summary: { questions, duplicates, notes, bySubject: {subject: {topic: count}}, skipped, errors }
+ * Returns a summary: { questions, duplicates, notes, bySubject: {subject: {topic: count}}, skipped, errors,
+ *   paused?: { resumeAt } } — paused when the AI ran out of free quota; the job resumes by itself.
  */
 export async function ingest({ buffer, mimeType, filename, caption = '', addedBy, onProgress = async () => {} }) {
   const hint = caption || filename || '';
@@ -66,42 +133,9 @@ export async function ingest({ buffer, mimeType, filename, caption = '', addedBy
     : mimeType === 'text/uri-list' ? 'link'
     : 'text';
   const sourceId = await store.addSource(filename || `${kind} upload`, kind, addedBy);
-  const summary = { questions: 0, duplicates: 0, notes: 0, bySubject: {}, skipped: 0, errors: [], usedAi: false };
-
-  const tally = (subject, topic, field) => {
-    const s = (summary.bySubject[subject] ??= {});
-    const t = (s[topic] ??= { questions: 0, notes: 0 });
-    t[field]++;
-  };
-
-  const save = async (result, pageOffset = 0) => {
-    for (const q of result.questions || []) {
-      if (!validQuestion(q)) { summary.skipped++; continue; }
-      const topic = q.topic?.trim() || 'General';
-      const isNew = await store.addQuestion({
-        subject: q.subject,
-        topic,
-        stem: q.stem.trim(),
-        options: q.options.map((o) => String(o).trim()),
-        answer: q.answer_index,
-        explanation: q.explanation || '',
-        year: q.year || '',
-        exam: q.exam || '',
-        answerChecked: q.answer_given_in_source,
-        origin: q.origin || 'bank',
-        sourceId,
-        page: q.page > 0 ? q.page + pageOffset : null,
-      });
-      if (isNew) { summary.questions++; tally(q.subject, topic, 'questions'); } else summary.duplicates++;
-    }
-    for (const n of result.notes || []) {
-      if (!SUBJECTS.includes(n.subject) || !n.content?.trim()) continue;
-      const topic = n.topic?.trim() || 'General';
-      await store.addNote({ subject: n.subject, topic, content: n.content.trim(), sourceId, page: n.page > 0 ? n.page + pageOffset : null });
-      summary.notes++;
-      tally(n.subject, topic, 'notes');
-    }
-  };
+  const summary = newSummary();
+  const save = makeSaver({ sourceId, summary, topics: await store.existingTopics() });
+  const opts = async (extra = {}) => ({ hint, existingTopics: await store.existingTopics(), ...extra });
 
   // Lecture recordings and YouTube links: only Gemini can watch or listen.
   if (kind === 'lecture' || kind === 'link') {
@@ -114,11 +148,10 @@ export async function ingest({ buffer, mimeType, filename, caption = '', addedBy
       kind === 'link'
         ? { type: 'url', url: buffer.toString('utf8').trim() }
         : { type: 'media', source: { media_type: mimeType.split(';')[0], data: buffer.toString('base64') } };
-    const lectureHint = `This is a recorded lecture, not a document. Treat it as study notes: write the key teaching points as notes per topic and write MCQs from them.${caption ? ` ${caption}` : ''}`;
     try {
-      await save(await extract([block], { hint: lectureHint, existingTopics: await store.existingTopics() }));
+      await save(await extract([block], { ...(await opts({ lecture: true })), hint: caption }));
     } catch (e) {
-      summary.errors.push(e.message);
+      summary.errors.push(friendlyError(e));
     }
     return summary;
   }
@@ -139,59 +172,130 @@ export async function ingest({ buffer, mimeType, filename, caption = '', addedBy
       return summary;
     }
     summary.usedAi = true;
-    const chunks = textChunks(text);
-    for (let i = 0; i < chunks.length; i++) {
-      if (chunks.length > 1) await onProgress(`Reading part ${i + 1} of ${chunks.length}…`);
+    for (const [i, chunk] of textChunks(text).entries()) {
       try {
-        await save(await extract([textBlock(chunks[i])], { hint, existingTopics: await store.existingTopics() }));
+        await save(await extract([textBlock(chunk)], await opts()));
       } catch (e) {
-        summary.errors.push(`Part ${i + 1}: ${e.message}`);
+        // Out of AI quota: keep what the offline parser can read instead of losing the upload.
+        if (e instanceof AiBusyError && parsed.questions.length) {
+          await save({ questions: offlineQuestions(parsed.questions, { hintSubject }).questions });
+          summary.errors.push('The AI is out of free quota for today, so I read the MCQs without it (no explanations, rougher topics).');
+          break;
+        }
+        summary.errors.push(`Part ${i + 1}: ${friendlyError(e)}`);
       }
     }
     return summary;
   }
 
   summary.usedAi = true;
-
   if (kind === 'image') {
     try {
-      await save(await extract([imageBlock(buffer, mimeType)], { hint, existingTopics: await store.existingTopics() }));
+      await save(await extract([imageBlock(buffer, mimeType)], await opts()));
     } catch (e) {
-      summary.errors.push(e.message);
+      summary.errors.push(friendlyError(e));
     }
     return summary;
   }
 
-  // Read up to 3 parts at once and save each as soon as it is done, so a long PDF fills the bank as it goes.
-  const inFlight = new Set();
-  let parts = 1;
-  let done = 0;
-  let nextMark = 0.25;
-  for await (const chunk of pdfChunks(buffer)) {
-    if (chunk.firstPage === 1 && chunk.total > PAGES_PER_CHUNK) {
-      parts = Math.ceil(chunk.total / PAGES_PER_CHUNK);
-      await onProgress(`This PDF has ${chunk.total} pages. I'm reading it in ${parts} parts and saving questions as I go, so you can practise while it runs.`);
-    }
-    const job = (async () => {
-      try {
-        const result = await extract([pdfBlock(chunk.buffer)], { hint, existingTopics: await store.existingTopics() });
-        await save(result, chunk.firstPage - 1);
-      } catch (e) {
-        summary.errors.push(`Pages ${chunk.firstPage}-${chunk.lastPage}: ${e.message}`);
-      }
-      done++;
-      console.log(`${filename}: part ${done}/${parts} read, ${summary.questions} questions and ${summary.notes} notes so far`);
-      if (parts > 1 && done < parts && done / parts >= nextMark) {
-        while (done / parts >= nextMark) nextMark += 0.25;
-        await onProgress(`⏳ ${Math.round((100 * done) / parts)}% read: ${summary.questions} questions and ${summary.notes} note sections saved so far.`);
-      }
-    })();
-    inFlight.add(job);
-    job.finally(() => inFlight.delete(job));
-    if (inFlight.size >= PARALLEL_PARTS) await Promise.race(inFlight);
+  // PDFs run as a resumable job: survives restarts and pauses until the AI quota resets.
+  let total;
+  try {
+    total = (await PDFDocument.load(buffer, { ignoreEncryption: true })).getPageCount();
+  } catch (e) {
+    summary.errors.push(`Couldn't open this PDF: ${e.message}`);
+    return summary;
   }
-  await Promise.all(inFlight);
-  return summary;
+  const parts = Math.ceil(total / PAGES_PER_CHUNK);
+  const jobId = await store.createJob({ phone: addedBy, filename, caption, data: buffer, sourceId, parts });
+  if (parts > 1) {
+    await onProgress(`This PDF has ${total} pages. I'm reading it in ${parts} parts and saving questions as I go, so you can practise while it runs.`);
+  }
+  return runJob(jobId, { onProgress });
+}
+
+const friendlyError = (e) =>
+  e instanceof AiBusyError ? 'The AI is out of free quota or busy right now.' : String(e.message || e).split('\n')[0].slice(0, 200);
+
+const running = new Set();
+
+/**
+ * Read the remaining parts of a PDF upload job. Parts are PAGES_PER_CHUNK pages with one page of
+ * overlap (questions cut at a boundary are skipped in one part and read whole in the next; duplicates
+ * are dropped by hash). The first part runs alone so later parts reuse its topic names.
+ */
+export async function runJob(jobId, { onProgress = async () => {} } = {}) {
+  if (running.has(jobId)) return null;
+  running.add(jobId);
+  try {
+    const job = await store.getJob(jobId);
+    const buffer = Buffer.from(job.data);
+    const src = await PDFDocument.load(buffer, { ignoreEncryption: true });
+    const total = src.getPageCount();
+    const summary = { ...newSummary(), ...job.summary, errors: [], paused: undefined };
+    const done = new Set(job.done_parts || []);
+    let pages = [];
+    try { pages = await pdfPages(buffer); } catch { /* scanned or odd PDF: the AI reads it anyway */ }
+    const keyMap = parseAnswerKey(pages.join('\n'));
+    const answerKey = Object.entries(keyMap).slice(0, 600).map(([n, i]) => `${n}-${'abcd'[i]}`).join(', ');
+    const save = makeSaver({ sourceId: job.source_id, summary, topics: await store.existingTopics(), answerKey: keyMap });
+    const hint = job.caption || job.filename || '';
+    await store.updateJob(jobId, { status: 'running' });
+
+    let busy = null;
+    let nextMark = Math.floor((done.size / job.parts) * 4 + 1) / 4;
+    const readPart = async (part) => {
+      const from = part * PAGES_PER_CHUNK + 1;
+      const to = Math.min(total, from + PAGES_PER_CHUNK); // one page of overlap with the next part
+      try {
+        for (const r of await extractRange(src, from, to, { hint, answerKey })) await save(r.result, r.offset);
+        done.add(part);
+      } catch (e) {
+        if (e instanceof AiBusyError) { busy = e; return; }
+        summary.errors.push(`Pages ${from}-${to}: ${friendlyError(e)}`);
+        done.add(part);
+      }
+      console.log(`${job.filename}: part ${done.size}/${job.parts} read, ${summary.questions} questions and ${summary.notes} notes so far`);
+      await store.updateJob(jobId, { done_parts: [...done], summary: { ...summary, errors: [] } });
+      if (job.parts > 1 && done.size < job.parts && done.size / job.parts >= nextMark) {
+        while (done.size / job.parts >= nextMark) nextMark += 0.25;
+        await onProgress(`⏳ ${Math.round((100 * done.size) / job.parts)}% read: ${summary.questions} questions and ${summary.notes} note sections saved so far.`);
+      }
+    };
+
+    const todo = Array.from({ length: job.parts }, (_, i) => i).filter((i) => !done.has(i));
+    if (todo.length && !done.size) await readPart(todo.shift());
+    const inFlight = new Set();
+    for (const part of todo) {
+      if (busy) break;
+      const p = readPart(part).finally(() => inFlight.delete(p));
+      inFlight.add(p);
+      if (inFlight.size >= PARALLEL_PARTS) await Promise.race(inFlight);
+    }
+    await Promise.all(inFlight);
+
+    if (busy && done.size < job.parts) {
+      const resumeAt = new Date(busy.resetAt || Date.now() + 60 * 60e3);
+      await store.updateJob(jobId, { status: 'paused', resume_at: resumeAt.toISOString(), done_parts: [...done], summary: { ...summary, errors: [] } });
+      return { ...summary, paused: { resumeAt, partsDone: done.size, parts: job.parts } };
+    }
+    await store.updateJob(jobId, { status: 'done', data: null, summary: { ...summary, errors: [] } });
+    return summary;
+  } finally {
+    running.delete(jobId);
+  }
+}
+
+/** Extract pages from..to; if the answer is cut off (too much output), split the range and try both halves. */
+async function extractRange(src, from, to, { hint, answerKey }) {
+  try {
+    const result = await extract([pdfBlock(await subPdf(src, from, to))], { hint, answerKey, existingTopics: await store.existingTopics() });
+    return [{ result, offset: from - 1 }];
+  } catch (e) {
+    if (e.code !== 'MAX_TOKENS' || to <= from) throw e;
+    const mid = Math.floor((from + to) / 2);
+    return [...(await extractRange(src, from, mid, { hint, answerKey })), ...(await extractRange(src, mid + 1, to, { hint, answerKey }))];
+  }
 }
 
 /** Text of each page of a PDF (empty strings for scanned pages). */
@@ -307,11 +411,24 @@ function splitNotes(text, size = 2000) {
   return out;
 }
 
+/** "at 5:30 PM" today, or "tomorrow at 5:30 PM", in the bot's timezone. */
+export function whenText(at, now = new Date()) {
+  const d = new Date(at);
+  const day = (x) => x.toLocaleDateString('en-CA', { timeZone: config.timezone });
+  const time = d.toLocaleTimeString('en-US', { timeZone: config.timezone, hour: 'numeric', minute: '2-digit' });
+  if (d - now < 60 * 60e3) return 'within the hour';
+  if (day(d) === day(now)) return `at ${time}`;
+  if (day(d) === day(new Date(now.getTime() + 24 * 3600e3))) return `tomorrow at ${time}`;
+  return `on ${d.toLocaleDateString('en-GB', { timeZone: config.timezone, day: 'numeric', month: 'short' })} at ${time}`;
+}
+
 export function formatSummary(summary, filename) {
   const lines = [];
   const name = filename ? `*${filename}*` : 'your upload';
-  if (!summary.questions && !summary.notes) {
-    lines.push(`I couldn't add anything from ${name}.`);
+  if (!summary.questions && !summary.notes && summary.paused) {
+    lines.push(`Nothing saved from ${name} yet.`);
+  } else if (!summary.questions && !summary.notes) {
+    lines.push(summary.duplicates ? `Everything in ${name} is already in your bank.` : `I couldn't add anything from ${name}.`);
   } else {
     const parts = [];
     if (summary.questions) parts.push(`${summary.questions} questions`);
@@ -326,6 +443,10 @@ export function formatSummary(summary, filename) {
         lines.push(`- ${topic}: ${bits.join(', ')}`);
       }
     }
+  }
+  if (summary.paused) {
+    const { partsDone, parts, resumeAt } = summary.paused;
+    lines.push('', `⏸ Read ${partsDone} of ${parts} parts so far. The free AI quota ran out, so I'll carry on by myself ${whenText(resumeAt)} and message you when it's done. Nothing to resend.`);
   }
   if (summary.duplicates) lines.push('', `${summary.duplicates} were already in your bank, skipped.`);
   if (summary.skipped) lines.push(`${summary.skipped} couldn't be read as complete 4-option questions.`);

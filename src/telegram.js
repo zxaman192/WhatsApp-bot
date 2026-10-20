@@ -73,7 +73,7 @@ export async function sendImage(to, buffer, mimeType, caption = '') {
   form.append('chat_id', chatId(to));
   form.append('caption', clip(caption, 1024));
   form.append('photo', new Blob([buffer], { type: mimeType }), 'image');
-  const res = await fetch(api('sendPhoto'), { method: 'POST', body: form });
+  const res = await fetch(api('sendPhoto'), { method: 'POST', body: form, signal: AbortSignal.timeout(60000) });
   const data = await res.json().catch(() => ({}));
   if (!data.ok) throw new Error(`Telegram sendPhoto failed (${res.status}): ${data.description || 'unknown error'}`);
 }
@@ -81,14 +81,20 @@ export async function sendImage(to, buffer, mimeType, caption = '') {
 /** Download a file a user sent. Bot API limit: 20 MB. */
 export async function downloadFile(fileId) {
   const file = await call('getFile', { file_id: fileId });
-  const res = await fetch(`https://api.telegram.org/file/bot${config.telegram.token}/${file.file_path}`);
+  const res = await fetch(`https://api.telegram.org/file/bot${config.telegram.token}/${file.file_path}`, { signal: AbortSignal.timeout(120000) });
   if (!res.ok) throw new Error(`Telegram file download failed (${res.status})`);
   return { buffer: Buffer.from(await res.arrayBuffer()), mimeType: null };
 }
 
-export function answerCallback(callbackId) {
+export function answerCallback(callbackId, text = '') {
   if (config.telegram.dryRun) return;
-  return call('answerCallbackQuery', { callback_query_id: callbackId }).catch(() => {});
+  return call('answerCallbackQuery', { callback_query_id: callbackId, ...(text ? { text } : {}) }, 1).catch(() => {});
+}
+
+/** "typing…" under the bot's name while it works on something slow. */
+export function typing(to) {
+  if (config.telegram.dryRun) return;
+  return call('sendChatAction', { chat_id: chatId(to), action: 'typing' }, 1).catch(() => {});
 }
 
 /** Point Telegram at our webhook. Called on startup when a public URL is known. */
@@ -102,14 +108,19 @@ export async function registerWebhook(publicUrl) {
     commands: [
       { command: 'q', description: 'One question now' },
       { command: 'test', description: 'Start a test' },
-      { command: 'grand', description: 'Full NEET PG mock (200 Q)' },
       { command: 'revise', description: 'Questions due for review' },
+      { command: 'today', description: "Today's plan" },
+      { command: 'grand', description: 'Timed NEET PG mock' },
+      { command: 'why', description: 'Explain the last question' },
+      { command: 'similar', description: 'Questions like the last one' },
       { command: 'spot', description: 'Image question' },
       { command: 'flash', description: 'Flashcards from your notes' },
       { command: 'coach', description: 'Drill your weakest topics' },
-      { command: 'plan', description: 'Your plan to exam day' },
       { command: 'highyield', description: 'Most-asked topics in your PYQs' },
+      { command: 'plan', description: 'Your plan to exam day' },
+      { command: 'bank', description: "What's in your question bank" },
       { command: 'stats', description: 'Your progress' },
+      { command: 'stop', description: 'End the running test' },
       { command: 'help', description: 'All commands' },
     ],
   });
@@ -126,7 +137,8 @@ export function toBotMessage(update) {
   if (update.callback_query) {
     const cq = update.callback_query;
     return {
-      from: `tg:${cq.message.chat.id}`,
+      from: `tg:${cq.message?.chat?.id ?? cq.from.id}`,
+      firstName: cq.from?.first_name,
       id: `tg-cb-${cq.id}`,
       callbackId: cq.id,
       type: 'interactive',
@@ -135,7 +147,7 @@ export function toBotMessage(update) {
   }
   const m = update.message;
   if (!m) return null;
-  const base = { from: `tg:${m.chat.id}`, id: `tg-${m.chat.id}-${m.message_id}`, username: m.from?.username };
+  const base = { from: `tg:${m.chat.id}`, id: `tg-${m.chat.id}-${m.message_id}`, username: m.from?.username, firstName: m.from?.first_name };
   if (m.document) {
     return {
       ...base,

@@ -20,6 +20,7 @@ async function post(payload) {
       'Content-Type': 'application/json',
     },
     body: JSON.stringify({ messaging_product: 'whatsapp', ...payload }),
+    signal: AbortSignal.timeout(20000),
   });
   if (!res.ok) {
     const body = await res.text();
@@ -90,6 +91,7 @@ export async function sendImage(to, buffer, mimeType, caption = '') {
     method: 'POST',
     headers: { Authorization: `Bearer ${config.whatsapp.token}` },
     body: form,
+    signal: AbortSignal.timeout(60000),
   });
   if (!up.ok) throw new Error(`WhatsApp media upload failed (${up.status}): ${await up.text()}`);
   const { id } = await up.json();
@@ -99,10 +101,10 @@ export async function sendImage(to, buffer, mimeType, caption = '') {
 /** Download media a user sent. Returns { buffer, mimeType }. */
 export async function downloadMedia(mediaId) {
   const auth = { Authorization: `Bearer ${config.whatsapp.token}` };
-  const meta = await fetch(`${graph()}/${mediaId}`, { headers: auth });
+  const meta = await fetch(`${graph()}/${mediaId}`, { headers: auth, signal: AbortSignal.timeout(20000) });
   if (!meta.ok) throw new Error(`Media lookup failed (${meta.status})`);
   const { url, mime_type: mimeType } = await meta.json();
-  const file = await fetch(url, { headers: auth });
+  const file = await fetch(url, { headers: auth, signal: AbortSignal.timeout(120000) });
   if (!file.ok) throw new Error(`Media download failed (${file.status})`);
   return { buffer: Buffer.from(await file.arrayBuffer()), mimeType };
 }
