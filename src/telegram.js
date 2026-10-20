@@ -56,6 +56,10 @@ export function toTelegramHtml(text) {
   flush();
   return out
     .join('\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .replace(/^\s*#{1,6}\s+(.+)$/gm, '<b>$1</b>')
+    .replace(/^(\s*)[-*]\s+/gm, '$1• ')
+    .replace(/\*\*(?=\S)([^*\n]+?)\*\*/g, '<b>$1</b>')
     .replace(/```([\s\S]+?)```/g, '<pre>$1</pre>')
     .replace(/`([^`\n]+)`/g, '<code>$1</code>')
     .replace(/(^|[^\w*])\*(?=\S)([^*\n]*?\S)\*(?![\w*])/g, '$1<b>$2</b>')

@@ -243,7 +243,9 @@ test('Telegram gets safe HTML, AI Markdown is tidied', async () => {
   const { tidy } = await import('../src/ingest/ai.js');
   assert.equal(toTelegramHtml('*Bold* and _it_ <x> file_name.pdf'), '<b>Bold</b> and <i>it</i> &lt;x&gt; file_name.pdf');
   assert.equal(toTelegramHtml('> *A. Ethosuximide*'), '<blockquote><b>A. Ethosuximide</b></blockquote>');
-  assert.equal(tidy('## DOC\n**Ethosuximide**\n- T-type Ca'), '*DOC*\n*Ethosuximide*\n• T-type Ca');
+  assert.equal(tidy('## DOC\n**Ethosuximide**\n- T-type Ca'), '*DOC*\n*Ethosuximide*\n• T-type Ca');  // Replies written in Markdown still look right in Telegram.
+  assert.equal(toTelegramHtml('## Heading\n**Answer: A**\n- Phenytoin is **not** used'), '<b>Heading</b>\n<b>Answer: A</b>\n• Phenytoin is <b>not</b> used');
+  assert.equal(toTelegramHtml('a\n\n\n\nb'), 'a\n\nb');
 });
 
 test('Llama on Groq answers when every Gemini model is out of quota', async () => {
