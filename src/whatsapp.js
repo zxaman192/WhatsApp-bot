@@ -45,6 +45,21 @@ export async function checkWhatsApp() {
   } catch (e) {
     return `WhatsApp check failed: ${e.message}`;
   }
+  // Why Meta might block sending: its own health check, with error codes and suggested fixes.
+  const health = async (path) => {
+    try {
+      const h = await get(path);
+      const problems = (h.health_status?.entities || []).flatMap((e) =>
+        (e.errors || []).map((x) => `${e.entity_type} ${e.id}: ${x.error_code} ${x.error_description}${x.possible_solution ? ` (fix: ${x.possible_solution})` : ''}`)
+      );
+      const extra = ['account_review_status', 'ban_state', 'business_verification_status', 'status', 'name_status'].filter((k) => h[k]).map((k) => `${k}=${typeof h[k] === 'object' ? JSON.stringify(h[k]) : h[k]}`);
+      lines.push(`WhatsApp health ${path.split('?')[0]}: ${h.health_status?.can_send_message || 'unknown'}${extra.length ? ` · ${extra.join(' · ')}` : ''}${problems.length ? ` · ${problems.join(' | ')}` : ''}`);
+    } catch (e) {
+      lines.push(`WhatsApp health check failed: ${e.message}`);
+    }
+  };
+  await health(`${phoneNumberId}?fields=health_status,status,name_status`);
+  if (businessAccountId) await health(`${businessAccountId}?fields=health_status,account_review_status,ban_state,business_verification_status`);
   if (businessAccountId) {
     try {
       // Meta only sends a business account's messages to apps subscribed to it.
