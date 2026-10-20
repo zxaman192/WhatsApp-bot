@@ -12,13 +12,21 @@ export function setSink(fn) {
   sink = fn;
 }
 
-async function call(method, body) {
-  const res = await fetch(api(method), {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
-    signal: AbortSignal.timeout(20000),
-  });
+async function call(method, body, tries = 3) {
+  let res;
+  try {
+    res = await fetch(api(method), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(20000),
+    });
+  } catch (e) {
+    // Network blips (e.g. right after the server wakes up): wait a moment and try again.
+    if (tries <= 1) throw e;
+    await new Promise((r) => setTimeout(r, 3000));
+    return call(method, body, tries - 1);
+  }
   const data = await res.json().catch(() => ({}));
   if (!data.ok) throw new Error(`Telegram ${method} failed (${res.status}): ${data.description || 'unknown error'}`);
   return data.result;
