@@ -1352,7 +1352,16 @@ async function handle(msg, { download = (id) => wa.downloadMedia(msg.from, id) }
     if (msg.type === 'audio' || msg.type === 'video') return await handleAudio(phone, msg, download);
     if (msg.type === 'document' || msg.type === 'image') {
       const media = msg[msg.type];
-      const { buffer, mimeType } = await download(media.id);
+      let file;
+      try {
+        file = await download(media.id);
+      } catch (e) {
+        console.error('Download failed:', e.message);
+        const name = media.filename ? `*${media.filename}*` : 'that file';
+        if (/too big/i.test(e.message)) return await wa.sendText(phone, `📥 ${name} is over Telegram's 20 MB limit for bots. Split it into smaller PDFs (or compress it) and send the parts.`);
+        return await wa.sendText(phone, `📥 I couldn't download ${name} (connection problem). Please send it again.`);
+      }
+      const { buffer, mimeType } = file;
       const mime = media.mime_type || mimeType || guessMime(media.filename);
       if (/^spot\b/i.test(media.caption || '')) return await saveSpot(phone, { buffer, mimeType: mime, caption: media.caption });
       return await handleUpload(phone, {

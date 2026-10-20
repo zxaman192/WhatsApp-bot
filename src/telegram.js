@@ -24,7 +24,7 @@ async function call(method, body, tries = 3) {
   } catch (e) {
     // Network blips (e.g. right after the server wakes up): wait a moment and try again.
     if (tries <= 1) throw e;
-    await new Promise((r) => setTimeout(r, 3000));
+    await new Promise((r) => setTimeout(r, tries >= 3 ? 2000 : 6000));
     return call(method, body, tries - 1);
   }
   const data = await res.json().catch(() => ({}));
@@ -141,7 +141,7 @@ export async function sendImage(to, buffer, mimeType, caption = '') {
 
 /** Download a file a user sent. Bot API limit: 20 MB. */
 export async function downloadFile(fileId) {
-  const file = await call('getFile', { file_id: fileId });
+  const file = await call('getFile', { file_id: fileId }, 4);
   const res = await fetch(`https://api.telegram.org/file/bot${config.telegram.token}/${file.file_path}`, { signal: AbortSignal.timeout(120000) });
   if (!res.ok) throw new Error(`Telegram file download failed (${res.status})`);
   return { buffer: Buffer.from(await res.arrayBuffer()), mimeType: null };

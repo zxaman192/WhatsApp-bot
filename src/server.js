@@ -1,10 +1,17 @@
 import express from 'express';
+import dns from 'node:dns';
+import net from 'node:net';
 import { createHmac, timingSafeEqual } from 'node:crypto';
 import { config } from './config.js';
 import { initDb } from './db.js';
 import { handleMessage } from './bot.js';
 import { registerWebhook, toBotMessage, webhookInfo } from './telegram.js';
 import { startScheduler, runDueDailies } from './scheduler.js';
+
+// Node tries IPv6 and IPv4 with a 250 ms connect timeout each; on Render that made calls to
+// api.telegram.org fail with ETIMEDOUT. Prefer IPv4 and give each attempt longer.
+dns.setDefaultResultOrder('ipv4first');
+net.setDefaultAutoSelectFamilyAttemptTimeout(3000);
 
 const app = express();
 // Keep the raw body so the webhook signature can be checked.
