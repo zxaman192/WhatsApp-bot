@@ -12,6 +12,10 @@ export const config = {
     // WhatsApp Business Account id: with it the server makes sure Meta delivers this account's messages to the app.
     businessAccountId: env.WHATSAPP_BUSINESS_ACCOUNT_ID || '',
     graphVersion: env.GRAPH_API_VERSION || 'v21.0',
+    // cloud = Meta's WhatsApp Cloud API. web = the bot is a linked device on an ordinary number (see waweb.js).
+    mode: (env.WHATSAPP_MODE || 'cloud').toLowerCase(),
+    // The bot's own number in web mode, with country code (e.g. 917991189108).
+    webNumber: env.WHATSAPP_WEB_NUMBER || '',
   },
   allowedNumbers: (env.ALLOWED_NUMBERS || '')
     .split(',')

@@ -130,6 +130,12 @@ const SCHEMA = `
   CREATE INDEX IF NOT EXISTS idx_users_buddy_group ON users(buddy_group) WHERE buddy_group IS NOT NULL;
   CREATE INDEX IF NOT EXISTS idx_questions_origin ON questions(origin, subject);
   ALTER TABLE upload_jobs ADD COLUMN IF NOT EXISTS chunk INT;
+  -- WhatsApp Web login (linked-device keys), so the link survives restarts and deploys.
+  CREATE TABLE IF NOT EXISTS wa_auth (
+    id TEXT PRIMARY KEY,
+    data TEXT NOT NULL
+  );
+  ALTER TABLE wa_auth ENABLE ROW LEVEL SECURITY;
 `;
 
 /** Connect and create tables. url: Postgres URL, 'memory' for an in-memory PGlite, or a PGlite data dir. */
@@ -732,3 +738,27 @@ export async function weekSummary(phone) {
   );
   return r;
 }
+
+// ---------- WhatsApp Web login ----------
+
+export async function authGet(ids) {
+  if (!ids.length) return {};
+  const rows = await q('SELECT id, data FROM wa_auth WHERE id = ANY($1)', [ids]);
+  return Object.fromEntries(rows.map((r) => [r.id, r.data]));
+}
+
+export async function authSet(entries) {
+  const latest = new Map(entries);
+  const gone = [...latest].filter(([, d]) => d == null).map(([id]) => id);
+  const kept = [...latest].filter(([, d]) => d != null);
+  if (gone.length) await q('DELETE FROM wa_auth WHERE id = ANY($1)', [gone]);
+  if (kept.length) {
+    await q('INSERT INTO wa_auth (id, data) SELECT * FROM unnest($1::text[], $2::text[]) ON CONFLICT (id) DO UPDATE SET data = EXCLUDED.data', [
+      kept.map(([id]) => id),
+      kept.map(([, d]) => d),
+    ]);
+  }
+}
+
+/** Forget the WhatsApp Web link (after the phone logs the bot out). */
+export const authClear = () => q('DELETE FROM wa_auth');

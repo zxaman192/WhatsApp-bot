@@ -16,4 +16,4 @@ export const sendTemplate = (to, name, lang) => wa.sendTemplate(to, name, lang);
 export const downloadMedia = (to, mediaId) => (tg.isTelegramId(to) ? tg.downloadFile(mediaId) : wa.downloadMedia(mediaId));
 export const isTelegram = tg.isTelegramId;
 /** Show "typing…" (Telegram only; WhatsApp Cloud API has no equivalent for bots). */
-export const typing = (to) => (tg.isTelegramId(to) ? tg.typing(to) : undefined);
+export const typing = (to) => (tg.isTelegramId(to) ? tg.typing(to) : wa.typing(to));

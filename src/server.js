@@ -7,6 +7,7 @@ import { initDb } from './db.js';
 import { handleMessage } from './bot.js';
 import { registerWebhook, toBotMessage, webhookInfo } from './telegram.js';
 import { checkWhatsApp } from './whatsapp.js';
+import * as waweb from './waweb.js';
 import { startScheduler, runDueDailies } from './scheduler.js';
 import { groqAvailable, checkGroq } from './ingest/groq.js';
 
@@ -51,7 +52,7 @@ app.get('/data-deletion', (_req, res) =>
     )
   )
 );
-app.get('/health', (_req, res) => res.json({ ok: true, dryRun: config.dryRun }));
+app.get('/health', (_req, res) => res.json({ ok: true, dryRun: config.dryRun, ...(config.whatsapp.mode === 'web' ? { whatsappWeb: waweb.isReady() } : {}) }));
 
 // Meta calls this once when you save the webhook URL.
 app.get('/webhook', (req, res) => {
@@ -131,5 +132,13 @@ if (config.telegram.token && config.publicUrl) {
     .then((i) => console.log(`Telegram webhook info: pending=${i.pending_update_count}${i.last_error_message ? `, last error: ${i.last_error_message}` : ''}`))
     .catch((e) => console.error('Telegram webhook registration failed:', e.message));
 }
-if (!config.dryRun) checkWhatsApp().then(console.log).catch((e) => console.error('WhatsApp check failed:', e.message));
+if (!config.dryRun && config.whatsapp.mode === 'web') {
+  waweb.start(handleMessage).catch((e) => console.error('WhatsApp Web failed to start:', e.message));
+  // A linked device only hears messages while it is running, so don't let the free instance fall asleep.
+  if (config.publicUrl) setInterval(() => fetch(`${config.publicUrl}/health`).catch(() => {}), 10 * 60 * 1000).unref();
+  process.once('SIGTERM', () => {
+    waweb.stop();
+    setTimeout(() => process.exit(0), 1000).unref();
+  });
+} else if (!config.dryRun) checkWhatsApp().then(console.log).catch((e) => console.error('WhatsApp check failed:', e.message));
 if (groqAvailable()) checkGroq().then(console.log).catch((e) => console.error('Groq key check failed:', e.message));

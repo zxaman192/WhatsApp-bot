@@ -1,4 +1,5 @@
 import { config } from './config.js';
+import * as web from './waweb.js';
 
 const graph = () => `https://graph.facebook.com/${config.whatsapp.graphVersion}`;
 
@@ -13,6 +14,7 @@ async function post(payload) {
     sink(payload.to, payload);
     return;
   }
+  if (config.whatsapp.mode === 'web') return web.send(payload);
   const res = await fetch(`${graph()}/${config.whatsapp.phoneNumberId}/messages`, {
     method: 'POST',
     headers: {
@@ -128,6 +130,7 @@ export function sendTemplate(to, name, lang) {
 /** Send an image (uploaded to WhatsApp first). */
 export async function sendImage(to, buffer, mimeType, caption = '') {
   if (config.dryRun) return sink(to, { to, type: 'image', image: { bytes: buffer.length, mime: mimeType, caption } });
+  if (config.whatsapp.mode === 'web') return web.sendImage(to, buffer, mimeType, clip(caption, 1024));
   const form = new FormData();
   form.append('messaging_product', 'whatsapp');
   form.append('type', mimeType);
@@ -158,4 +161,9 @@ export async function downloadMedia(mediaId) {
 export function sendMenu(to, body, buttons, _columns, label = 'Menu') {
   if (buttons.length <= 3) return sendButtons(to, body, buttons);
   return sendList(to, body, label, buttons.slice(0, 10), 'Choose one');
+}
+
+/** Show "typing…" (WhatsApp Web only; the Cloud API has no equivalent we use). */
+export function typing(to) {
+  if (!config.dryRun && config.whatsapp.mode === 'web') web.typing(to);
 }

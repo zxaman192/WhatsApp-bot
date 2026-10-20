@@ -1,6 +1,7 @@
 import * as store from './db.js';
 import * as wa from './messenger.js';
 import { answerCallback } from './telegram.js';
+import { relink as relinkWhatsApp } from './waweb.js';
 import { config, isAllowed } from './config.js';
 import { SUBJECTS, EXAM_WEIGHT, matchSubject, findSubjectIn } from './subjects.js';
 import { AsyncLocalStorage } from 'node:async_hooks';
@@ -146,6 +147,8 @@ async function noteReference(q) {
 }
 
 function inWindow(user) {
+  // A linked WhatsApp number can message anyone any time; only the Cloud API has the 24-hour rule.
+  if (config.whatsapp.mode === 'web') return true;
   return user.last_inbound_at && Date.now() - new Date(user.last_inbound_at).getTime() < 23.5 * 3600 * 1000;
 }
 
@@ -1534,6 +1537,9 @@ async function handle(msg, { download = (id) => wa.downloadMedia(msg.from, id) }
     const lower = cmdText.toLowerCase();
     const [cmd, ...restWords] = lower.split(/\s+/);
     const rest = cmdText.slice(cmd.length).trim();
+
+    // The owner asks for a fresh code to link the bot's WhatsApp number (web mode).
+    if (lower === 'link whatsapp' && wa.isTelegram(phone)) return await wa.sendText(phone, await relinkWhatsApp());
 
     // A reply to "What should I call you?" or "When is your exam?"
     const awaiting = user.state.awaiting;
