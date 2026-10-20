@@ -1,4 +1,4 @@
-// Llama on Groq (free key from console.groq.com): the backup when every Gemini model is out of free quota.
+// Groq (free key from console.groq.com), Llama when offered: the backup when every Gemini model is out of free quota.
 // Text only, so PDFs fall back to their selectable text; voice notes use Groq's Whisper.
 import { config } from '../config.js';
 import { AiBusyError } from './gemini.js';
@@ -8,8 +8,17 @@ export const groqAvailable = () => Boolean(config.groq.apiKey);
 
 const BASE = 'https://api.groq.com/openai/v1';
 let restingUntil = 0;
-// Groq retires models from time to time; if the configured one is gone, try these Llama models in turn.
-const MODELS = () => [...new Set([config.groq.model, 'llama-3.3-70b-versatile', 'meta-llama/llama-4-maverick-17b-128e-instruct', 'meta-llama/llama-4-scout-17b-16e-instruct', 'llama-3.1-8b-instant'])];
+// Groq retires models often (Llama chat models were gone by late 2026), so the startup check picks the
+// best chat model Groq offers; these names are only the fallback before that check has run.
+let offered = null;
+const PREFER = [/llama.*(70b|maverick|scout)/i, /gpt-oss-120b/i, /qwen/i, /kimi/i, /llama/i, /gpt-oss/i, /./];
+const NOT_CHAT = /guard|whisper|tts|orpheus|playai|distil|compound/i;
+const MODELS = () => {
+  if (!offered) return [...new Set([config.groq.model, 'llama-3.3-70b-versatile', 'openai/gpt-oss-120b', 'llama-3.1-8b-instant'])];
+  const chat = offered.filter((m) => !NOT_CHAT.test(m));
+  const ranked = PREFER.flatMap((re) => chat.filter((m) => re.test(m)));
+  return [...new Set([...(chat.includes(config.groq.model) ? [config.groq.model] : []), ...ranked])];
+};
 const retired = new Set();
 
 function busy(res, data) {
@@ -103,18 +112,18 @@ export async function transcribeWithGroq(buffer, mimeType) {
   return String(data.text || '').trim();
 }
 
-/** Startup check: is the key valid, and which Llama models does Groq offer right now? */
+/** Startup check: is the key valid, and which chat models does Groq offer right now? */
 export async function checkGroq() {
   const res = await fetch(`${BASE}/models`, { headers: { Authorization: `Bearer ${config.groq.apiKey}` }, signal: AbortSignal.timeout(15000) });
   const data = await res.json().catch(() => ({}));
   if (!res.ok) return `Groq key check failed (${res.status}): ${data.error?.message || 'unknown'}`;
-  const llama = (data.data || []).map((m) => m.id).filter((id) => /llama/i.test(id));
-  const usable = MODELS().filter((m) => llama.includes(m));
-  return `Groq key OK. Llama models: ${llama.join(', ') || 'none'}. Will use: ${usable.join(' → ') || 'none of the configured ones; set GROQ_MODEL'}`;
+  offered = (data.data || []).map((m) => m.id);
+  return `Groq key OK. Offered: ${offered.join(', ')}. Will use: ${MODELS().slice(0, 3).join(' → ') || 'none'}`;
 }
 
 /** For tests. */
 export function resetGroq() {
   restingUntil = 0;
+  offered = null;
   retired.clear();
 }
