@@ -1,5 +1,5 @@
 import * as store from './db.js';
-import { isAllowed } from './config.js';
+import { canUse } from './access.js';
 import { sendDaily, sendWeekly, resumeJobs } from './bot.js';
 import { localNow } from './time.js';
 
@@ -10,7 +10,7 @@ export async function runDueDailies(now = new Date()) {
   const { date, time } = localNow(now);
   const sent = [];
   for (const u of await store.allUsers()) {
-    if (!isAllowed(u.phone) || u.daily_time > time) continue;
+    if (!canUse(u.phone, u) || u.daily_time > time) continue;
     // Claim the day first (atomically) so a slow send, a crash or a second instance can't cause a double send.
     if (u.daily_enabled && u.last_daily_date !== date && (await store.claimDay(u.phone, 'last_daily_date', date))) {
       try {

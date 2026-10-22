@@ -244,7 +244,7 @@ test('telegram updates become bot messages', () => {
 test('telegram: strangers are told their id, allowed users share the same bank', async () => {
   await handleMessage({ from: 'tg:777', id: 'tg-x1', type: 'text', text: { body: 'hi' } });
   assert.equal(out.at(-1).type, 'telegram');
-  assert.match(out.at(-1).text, /Your Telegram ID is 777/);
+  assert.match(out.at(-1).text, /invite-only/);
 
   config.telegram.allowedIds = ['777'];
   out = [];

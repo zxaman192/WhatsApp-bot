@@ -2,6 +2,8 @@ import * as store from './db.js';
 import * as wa from './messenger.js';
 import { answerCallback } from './telegram.js';
 import { relink as relinkWhatsApp } from './waweb.js';
+import * as access from './access.js';
+import { fancy } from './format.js';
 import { config, isAllowed } from './config.js';
 import { SUBJECTS, EXAM_WEIGHT, matchSubject, findSubjectIn } from './subjects.js';
 import { AsyncLocalStorage } from 'node:async_hooks';
@@ -661,7 +663,7 @@ async function answerSpot(phone, user, { index = null, text = null, qid = null }
 const MAX_MEDIA = 14 * 1024 * 1024;
 const NEED_GEMINI = 'Voice notes, lecture recordings and YouTube links need a Gemini key. Add GEMINI_API_KEY in the bot settings on Render (free at aistudio.google.com).';
 
-async function handleAudio(phone, msg, download) {
+async function handleAudio(phone, msg, download, mod = true) {
   const media = msg.audio || msg.video;
   if (!mediaAvailable()) return wa.sendText(phone, `🎙️ ${NEED_GEMINI}`);
   const { buffer, mimeType } = await download(media.id);
@@ -672,6 +674,7 @@ async function handleAudio(phone, msg, download) {
   const caption = media.caption || '';
   // Short voice notes are questions; anything long (or captioned "lecture") is study material.
   const lecture = /lecture|class|notes/i.test(caption) || (media.duration || 0) > 300 || buffer.length > 1024 * 1024;
+  if (lecture && !mod) return wa.sendButtons(phone, access.ADMIN_ONLY, [BACK]);
   if (lecture) return handleUpload(phone, { buffer, mimeType: mime, filename: 'lecture recording', caption });
   wa.typing(phone);
   let text;
@@ -1142,7 +1145,7 @@ function handleUpload(phone, { buffer, mimeType, filename, caption }) {
 export async function resumeJobs() {
   for (const { id } of await store.resumableJobs()) {
     const job = await store.getJob(id);
-    if (!job?.data || !isAllowed(job.phone)) {
+    if (!job?.data || !access.isModerator(job.phone)) {
       await store.updateJob(id, { status: 'failed', data: null });
       continue;
     }
@@ -1195,7 +1198,7 @@ const MAIN_MENU = [
 async function showMenu(phone, user) {
   const [t, rc, st] = [await store.dbTotals(), await store.reviewCounts(phone), await store.streak(phone)];
   const lines = [
-    `📚 *NEET PG Study Bot*`,
+    `📚 ${fancy('NEET PG Study Bot')}`,
     `_${user.name ? `Hi ${user.name}! ` : ''}What shall we study today?_`,
     '',
     `🗃 *${t.questions}* ${t.questions === 1 ? 'question' : 'questions'}  ·  📖 *${t.notes}* ${t.notes === 1 ? 'note section' : 'note sections'}`,
@@ -1208,7 +1211,9 @@ async function showMenu(phone, user) {
     await store.updateUser(phone, { state: { ...user.state, kb: true } });
     await wa.sendWithKeyboard(phone, '⌨️ Quick buttons are under the chat box.');
   }
-  return wa.sendMenu(phone, lines.join('\n'), wa.isTelegram(phone) ? MAIN_MENU : MAIN_MENU.slice(0, 10), 2, 'Open menu');
+  // Members can't change the shared material; moderators also get the users list.
+  const items = access.isModerator(phone) ? [...MAIN_MENU.slice(0, 10), { id: 'usr:list', title: '👥 Users', description: 'Requests and stats' }, ...MAIN_MENU.slice(10)] : MAIN_MENU.filter((m) => m.id !== 'm:db');
+  return wa.sendMenu(phone, lines.join('\n'), wa.isTelegram(phone) ? items : items.slice(0, 10), 2, 'Open menu');
 }
 
 const BACK = { id: 'm:menu', title: '🏠 Menu' };
@@ -1350,7 +1355,7 @@ function withLock(key, fn) {
   return run;
 }
 
-const ONBOARDING = (name) => `👋 *Welcome${name ? `, ${name}` : ''}!*
+const ONBOARDING = (name) => `👋 ${fancy(`Welcome${name ? `, ${name}` : ''}!`)}
 _I'm your NEET PG study partner. Here's how it works._
 
 📥 *1. Add your material*
@@ -1367,15 +1372,11 @@ _Every morning I send a question of the day. Tap 🏠 Menu any time to find ever
 async function handle(msg, { download = (id) => wa.downloadMedia(msg.from, id) } = {}) {
   const phone = msg.from;
   if (msg.callbackId) answerCallback(msg.callbackId);
-  if (!isAllowed(phone)) {
-    // Telegram bots are public, so strangers can find them. Tell them their id so the owner can allow it.
-    if (wa.isTelegram(phone)) {
-      await wa.sendText(phone, `This is a private bot. Your Telegram ID is ${phone.slice(3)}. To use it, add that number to TELEGRAM_ALLOWED_IDS in the bot's settings.`);
-    }
-    return;
-  }
   try {
     const user = await store.getUser(phone);
+    // Anyone can message the bot; people without access get the welcome and can ask for it.
+    if (!access.canUse(phone, user)) return await access.gate(phone, user, msg);
+    const mod = access.isModerator(phone);
     const firstContact = !user.last_inbound_at;
     // A brand-new user starts getting the daily question tomorrow, not a minute after saying hi.
     const name = !user.name && msg.firstName ? String(msg.firstName).slice(0, 30) : null;
@@ -1392,8 +1393,9 @@ async function handle(msg, { download = (id) => wa.downloadMedia(msg.from, id) }
       return await showMenu(phone, user);
     }
 
-    // Uploads
-    if (msg.type === 'audio' || msg.type === 'video') return await handleAudio(phone, msg, download);
+    // Uploads (the shared study material is the moderators' to change)
+    if (msg.type === 'audio' || msg.type === 'video') return await handleAudio(phone, msg, download, mod);
+    if ((msg.type === 'document' || msg.type === 'image') && !mod) return await wa.sendButtons(phone, access.ADMIN_ONLY, [BACK]);
     if (msg.type === 'document' || msg.type === 'image') {
       const media = msg[msg.type];
       let file;
@@ -1419,6 +1421,8 @@ async function handle(msg, { download = (id) => wa.downloadMedia(msg.from, id) }
     // Taps on lists / buttons
     const replyId = msg.interactive?.list_reply?.id || msg.interactive?.button_reply?.id;
     if (replyId) {
+      if (await access.moderatorTap(phone, replyId)) return;
+      if (/^(db|dbf|dbdel|dbdelok|dbfix|dbdq)$/.test(replyId.split(':')[0]) && !mod) return await wa.sendButtons(phone, access.ADMIN_ONLY, [BACK]);
       const [kind, a, b] = replyId.split(':');
       if (kind === 'ans') return await handleAnswer(phone, user, Number(a), Number(b));
       if (kind === 'tsub') {
@@ -1461,7 +1465,7 @@ async function handle(msg, { download = (id) => wa.downloadMedia(msg.from, id) }
         if (a === 'flash') return await startFlash(phone, user);
         if (a === 'hy') return await showHighYield(phone, '');
         if (a === 'stats') return await showStats(phone);
-        if (a === 'db') return await dbMenu(phone, user);
+        if (a === 'db') return mod ? await dbMenu(phone, user) : await wa.sendButtons(phone, access.ADMIN_ONLY, [BACK]);
         if (a === 'spot') return await askSpot(phone, user, '');
         if (a === 'settings') return await showSettings(phone, user);
         if (a === 'buddy') return await buddy(phone, user, '');
@@ -1579,9 +1583,14 @@ async function handle(msg, { download = (id) => wa.downloadMedia(msg.from, id) }
         return await sendWithButtons(phone, HELP, [BACK], 'Back to the menu?');
       case 'settings': case 'setting':
         return await showSettings(phone, user);
+      case 'users': case 'members': case 'people':
+        if (mod) return await access.showUsers(phone);
+        break;
       case 'database': case 'db': case 'manage': case 'files': case 'uploads':
+        if (!mod) return await wa.sendButtons(phone, access.ADMIN_ONLY, [BACK]);
         return await dbMenu(phone, user);
       case 'fix': {
+        if (!mod) return await wa.sendButtons(phone, access.ADMIN_ONLY, [BACK]);
         const l = rest.match(/^\(?([a-d])\)?$/i);
         if (!l) return await dbFixPrompt(phone, user);
         if (!user.state.lastQid) return await wa.sendText(phone, 'Answer a question first, then send *fix B* to correct its key.');
@@ -1591,6 +1600,7 @@ async function handle(msg, { download = (id) => wa.downloadMedia(msg.from, id) }
         if (/^my\s+(data|account|progress)/i.test(rest)) {
           return await wa.sendButtons(phone, '⚠️ *Delete my data*\n\nThis erases your answers, scores, revision schedule and settings. Uploaded notes and questions stay. This can’t be undone.', [{ id: 'wipeok', title: '🗑 Yes, delete' }, BACK]);
         }
+        if (!mod) return await wa.sendButtons(phone, access.ADMIN_ONLY, [BACK]);
         return await dbDeletePrompt(phone, user);
       case 'q': case 'question': case 'quiz': case 'next':
         return await askSingle(phone, user, { subject: matchSubject(restWords[0]) });
@@ -1671,9 +1681,10 @@ async function handle(msg, { download = (id) => wa.downloadMedia(msg.from, id) }
     if (user.state.spot?.free) return await answerSpot(phone, user, { text });
     // A YouTube lecture → notes and questions.
     const yt = text.match(YOUTUBE);
+    if (yt && !mod) return await wa.sendButtons(phone, access.ADMIN_ONLY, [BACK]);
     if (yt) return await handleLink(phone, yt[0], text.replace(yt[0], '').trim());
     // Long pasted text or something shaped like MCQs → add it to the bank.
-    if (looksLikeMaterial(text)) {
+    if (looksLikeMaterial(text) && mod) {
       return await handleUpload(phone, { buffer: Buffer.from(text, 'utf8'), mimeType: 'text/plain', filename: 'pasted text', caption: '' });
     }
     // Too short or no real words ("?", "ok", an emoji): not a question worth searching for.

@@ -53,8 +53,8 @@ beforeEach(() => {
 
 test('first contact gets a short onboarding, then help', async () => {
   await sendAs(ME, { type: 'text', text: { body: 'hi' }, firstName: 'Harsh' });
-  assert.match(texts(), /Welcome, Harsh!\*\n_I'm your NEET PG study partner/);
-  assert.match(lastText(), /NEET PG Study Bot/);
+  assert.match(texts(), /𝗪𝗲𝗹𝗰𝗼𝗺𝗲, 𝗛𝗮𝗿𝘀𝗵!\n_I'm your NEET PG study partner/);
+  assert.match(lastText(), /𝗡𝗘𝗘𝗧 𝗣𝗚 𝗦𝘁𝘂𝗱𝘆 𝗕𝗼𝘁/);
   assert.equal((await store.getUser(ME)).name, 'Harsh', 'name taken from Telegram');
   await say('help');
   assert.match(texts(), /📥 \*Add material\*/);
@@ -189,7 +189,7 @@ test('menu, settings and database buttons all answer cleanly', async () => {
     await say('stop');
   }
   await say('menu');
-  assert.match(texts(), /NEET PG Study Bot/);
+  assert.match(texts(), /𝗡𝗘𝗘𝗧 𝗣𝗚 𝗦𝘁𝘂𝗱𝘆 𝗕𝗼𝘁/);
 });
 
 test('settings: exam date and name by reply', async () => {

@@ -85,6 +85,9 @@ const SCHEMA = `
   ALTER TABLE users ADD COLUMN IF NOT EXISTS exam_date TEXT;
   ALTER TABLE users ADD COLUMN IF NOT EXISTS buddy_group TEXT;
   ALTER TABLE users ADD COLUMN IF NOT EXISTS last_weekly_date TEXT;
+  -- Public mode: pending | approved | declined | removed (moderators don't need it).
+  ALTER TABLE users ADD COLUMN IF NOT EXISTS access TEXT;
+  ALTER TABLE users ADD COLUMN IF NOT EXISTS access_requested_at TIMESTAMPTZ;
   ALTER TABLE questions ADD COLUMN IF NOT EXISTS image BYTEA;
   ALTER TABLE questions ADD COLUMN IF NOT EXISTS image_mime TEXT;
   CREATE TABLE IF NOT EXISTS reviews (
@@ -192,7 +195,7 @@ export async function getUser(phone) {
   return one('SELECT * FROM users WHERE phone = $1', [phone]);
 }
 
-const USER_COLS = new Set(['daily_enabled', 'daily_time', 'daily_subject', 'last_daily_date', 'last_inbound_at', 'state', 'name', 'exam_date', 'buddy_group', 'last_weekly_date']);
+const USER_COLS = new Set(['daily_enabled', 'daily_time', 'daily_subject', 'last_daily_date', 'last_inbound_at', 'state', 'name', 'exam_date', 'buddy_group', 'last_weekly_date', 'access', 'access_requested_at']);
 
 export async function updateUser(phone, fields) {
   phone = account(phone);
@@ -204,6 +207,19 @@ export async function updateUser(phone, fields) {
     phone,
   ]);
 }
+
+/** A user's row without creating one. */
+export const findUser = (id) => one('SELECT * FROM users WHERE phone = $1', [account(id)]);
+
+/** Everyone (except linked duplicates) with how many questions they've answered. */
+export const listUsers = () =>
+  q(
+    `SELECT u.phone, u.name, u.access, u.access_requested_at, u.last_inbound_at,
+            COUNT(a.id)::int AS n, COUNT(a.id) FILTER (WHERE a.correct)::int AS c
+     FROM users u LEFT JOIN attempts a ON a.phone = u.phone
+     WHERE NOT (u.phone = ANY($1)) GROUP BY u.phone ORDER BY u.last_inbound_at DESC NULLS LAST`,
+    [[...links.keys()]]
+  );
 
 export const allUsers = () => q('SELECT * FROM users WHERE NOT (phone = ANY($1))', [[...links.keys()]]);
 

@@ -15,3 +15,16 @@ export function polish(text) {
     .replace(/\n{3,}/g, '\n\n')
     .trim();
 }
+
+/** Headline letters in Unicode bold sans (𝗡𝗘𝗘𝗧 𝗣𝗚), for welcome and intro titles. Looks the same on WhatsApp and Telegram. */
+export function fancy(text) {
+  return [...String(text)]
+    .map((ch) => {
+      const c = ch.codePointAt(0);
+      if (c >= 65 && c <= 90) return String.fromCodePoint(0x1d5d4 + c - 65);
+      if (c >= 97 && c <= 122) return String.fromCodePoint(0x1d5ee + c - 97);
+      if (c >= 48 && c <= 57) return String.fromCodePoint(0x1d7ec + c - 48);
+      return ch;
+    })
+    .join('');
+}
