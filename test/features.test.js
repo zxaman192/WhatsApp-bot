@@ -11,6 +11,9 @@ config.gemini.apiKey = '';
 config.allowedNumbers = [];
 
 const store = await import('../src/db.js');
+// Titles are set in Unicode bold letters; tests read them as plain text.
+const { unfancy } = await import('../src/format.js');
+const plain = (p) => JSON.parse(unfancy(JSON.stringify(p)));
 const { setSink } = await import('../src/whatsapp.js');
 const tg = await import('../src/telegram.js');
 const { handleMessage, parseDate, makePlan, clozeCards, GRAND_DAY } = await import('../src/bot.js');
@@ -20,8 +23,8 @@ const { localNow, addDays } = await import('../src/time.js');
 const ME = '911111111111';
 const FRIEND = '912222222222';
 let out = [];
-setSink((to, p) => out.push({ ...p, to }));
-tg.setSink((to, p) => out.push({ ...p, to }));
+setSink((to, p) => out.push(plain({ ...p, to })));
+tg.setSink((to, p) => out.push(plain({ ...p, to })));
 let files = {};
 let n = 0;
 const sendAs = (from, extra) => handleMessage({ from, id: `f${++n}`, ...extra }, { download: async (id) => files[id] });
@@ -143,7 +146,7 @@ test('spaced repetition: a wrong answer comes back tomorrow, then after 3, 7 and
 
 test('grand test: timed, +4/−1, skip, no answers until the end', async () => {
   await say('grand 10');
-  assert.match(out[0].text.body, /Grand test started\*\n\n📝 \*10\* questions/);
+  assert.match(out[0].text.body, /Grand test started\n\n📝 \*10\* questions/);
   assert.match(out[0].text.body, /11m\* on the clock/);
   const card = out.at(-1);
   assert.match(card.interactive.body.text, /Question 1 of 10  ·  ⏱ 11m left/);
@@ -245,7 +248,7 @@ test('YouTube lectures and long recordings become notes and questions (Gemini)',
     await say('https://youtu.be/abc123XYZ pharma');
     assert.deepEqual(g.calls[0].contents[0].parts[0], { file_data: { file_uri: 'https://youtu.be/abc123XYZ' } });
     assert.match(g.calls[0].contents[0].parts.at(-1).text, /recorded lecture/);
-    assert.match(lastText(), /Upload complete\*\n_YouTube lecture_\n\n📝 \*Questions:\* 1\n📖 \*Note sections:\* 1/);
+    assert.match(lastText(), /Upload complete\n_YouTube lecture_\n\n📝 \*Questions:\* 1\n📖 \*Note sections:\* 1/);
 
     files = { lec: { buffer: Buffer.alloc(2 * 1024 * 1024, 1), mimeType: 'audio/mpeg' } };
     out = [];
@@ -279,7 +282,7 @@ test('coach finds weak topics and drills them', async () => {
 test('flashcards from notes without AI: show, knew it, missed, summary', async () => {
   await say('flash pharma antiepileptics');
   let card = out.at(-1);
-  assert.match(card.interactive.body.text, /Flashcard 1 of \d\*\n_Pharmacology › Antiepileptics \(p\.3\)_/);
+  assert.match(card.interactive.body.text, /Flashcard 1 of \d\n_Pharmacology › Antiepileptics \(p\.3\)_/);
   const total = Number(card.interactive.body.text.match(/Flashcard 1 of (\d)/)[1]);
   for (let i = 0; i < total; i++) {
     await tap(`flash:show:${i}`);
@@ -380,4 +383,30 @@ test('weekly report goes out on Sunday, once', async () => {
   await say('stats');
   assert.match(lastText(), /[Ss]treak/);
   assert.match(lastText(), /in queue/);
+});
+
+test('practice modes: rapid 5, departments, PYQ years and department tests', async () => {
+  await say('stop');
+  out = [];
+  await say('practice');
+  assert.match(lastText(), /Practice Modes/);
+  await tap('pm:r5');
+  assert.match(texts(), /Test: Rapid 5/);
+  await say('stop');
+  out = [];
+  await tap('pm:dept');
+  assert.match(lastText(), /Departments/);
+  assert.ok(JSON.stringify(out.at(-1)).includes('dep:Pharmacology'));
+  await tap('dep:Pharmacology');
+  assert.match(lastText(), /Pharmacology\n_\d+ questions · \d+ PYQ/);
+  await tap('dq:Pharmacology:5');
+  assert.match(texts(), /Test: Pharmacology · Rapid 5/);
+  await say('stop');
+  out = [];
+  await say('pyq');
+  assert.match(lastText(), /Previous Year Questions/);
+  assert.ok(JSON.stringify(out.at(-1)).includes('pyq:2019'));
+  await tap('pyq:2019');
+  assert.match(texts(), /Test: PYQ 2019/);
+  await say('stop');
 });

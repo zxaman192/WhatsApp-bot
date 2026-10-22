@@ -26,33 +26,49 @@ function ago(ts) {
   return `${Math.round(m / 1440)} days ago`;
 }
 
-const WELCOME = (name) => `👋 Hi${name ? ` ${name}` : ''}! Welcome to
+const LINE = '━━━━━━━━━━━━━━';
+
+const WELCOME = (name) => `👋 Hi${name ? ` ${name}` : ''}, welcome to
+
 🩺 ${fancy('NEET PG Study Bot')}
-_Your pocket study partner for NEET PG._
+_✦ Your pocket study partner for NEET PG ✦_
+
+${LINE}
 
 ✨ *What you get*
-📝 Practice questions from PYQs and a big question bank
-🧪 Tests and full mock exams, timed like the real one
-🧠 Ask any doubt and get a short, clear answer
-🔁 Smart revision that brings back what you got wrong
-📊 Your own progress report, streaks and weak topics
+
+➜ 📝 *Practice questions*: PYQs and a big question bank
+➜ ⚡ *Rapid rounds*: 5 or 10 questions in minutes
+➜ 🏥 *Department banks*: ENT, Pharma, Surgery and more
+➜ 🏆 *Mock exams*: timed, +4/−1, like the real one
+➜ 🧠 *Doubt solver*: short, clear answers
+➜ 📊 *Your report*: streaks, accuracy, weak topics
+
+${LINE}
 
 🔐 *This bot is invite-only*
-Tap *Request access* below. The admin will check it and you'll get a message right here once you're in. It's free.`;
+Tap *🙋 Request access* below ⬇️
+_The admin checks every request. You'll get a message right here once you're in. It's free._`;
 
 const APPROVED = (name) => `🎉 ${fancy(`You're in${name ? `, ${name}` : ''}!`)}
-_Your access is approved. Welcome aboard!_
+_✦ Your access is approved. Welcome aboard! ✦_
 
-🚀 *How to start*
-1️⃣ Tap *🏠 Menu* to see everything
-2️⃣ Try *📝 Question* for a quick one
-3️⃣ Or just type a doubt, like _"DOC for absence seizures?"_
+${LINE}
 
-⏰ Every morning at ${config.defaultDailyTime} I'll send you one question of the day. Change the time in ⚙️ Settings.
+🚀 *Start in 3 steps*
 
-📊 Your answers, scores and streaks are saved to your own account.`;
+1️⃣ Tap *🏠 Menu* ➜ see everything
+2️⃣ Tap *🎯 Practice* ➜ rapid 5, departments, PYQs
+3️⃣ Type any doubt ➜ _"DOC for absence seizures?"_
 
-const PENDING = '⏳ *Request sent*\n\nThe admin has your request. You\'ll get a message here as soon as it\'s approved.';
+${LINE}
+
+⏰ *Daily question* at *${config.defaultDailyTime}* every morning
+_Change it any time in ⚙️ Settings._
+
+📊 Your answers, scores and streaks are saved to *your own account*.`;
+
+const PENDING = `⏳ ${fancy('Request sent')}\n\n➜ The admin has your request.\n➜ You'll get a message *right here* as soon as it's approved.\n\n_Thanks for your patience_ 🙏`;
 const DECLINED = '🙏 Sorry, your access request wasn\'t approved this time.';
 
 async function notifyModerators(body, buttons) {

@@ -488,11 +488,12 @@ export async function reviewCounts(phone) {
   );
 }
 
-export async function countQuestions({ subject = null, topic = null } = {}) {
+export async function countQuestions({ subject = null, topic = null, pyqOnly = false } = {}) {
   const r = await one(
     `SELECT COUNT(*)::int AS n FROM questions
-     WHERE origin <> 'image' AND ($1::text IS NULL OR subject = $1) AND ($2::text IS NULL OR topic ILIKE '%' || $2 || '%')`,
-    [subject, topic]
+     WHERE origin <> 'image' AND ($1::text IS NULL OR subject = $1) AND ($2::text IS NULL OR topic ILIKE '%' || $2 || '%')
+       AND (NOT $3 OR origin = 'pyq')`,
+    [subject, topic, pyqOnly]
   );
   return r.n;
 }
@@ -502,6 +503,9 @@ export const bankSummary = () =>
     `SELECT subject, topic, COUNT(*)::int AS n, COUNT(*) FILTER (WHERE origin = 'pyq')::int AS pyq
      FROM questions WHERE origin <> 'image' GROUP BY subject, topic ORDER BY subject, n DESC`
   );
+
+export const pyqYears = () =>
+  q(`SELECT year, COUNT(*)::int AS n FROM questions WHERE origin = 'pyq' AND year <> '' AND year IS NOT NULL GROUP BY year ORDER BY year DESC`);
 
 export const notesSummary = () =>
   q('SELECT subject, COUNT(DISTINCT topic)::int AS topics, COUNT(*)::int AS sections FROM notes GROUP BY subject ORDER BY subject');

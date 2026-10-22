@@ -11,6 +11,9 @@ config.allowedNumbers = ['910000000001'];
 config.telegram.allowedIds = ['1'];
 
 const store = await import('../src/db.js');
+// Titles are set in Unicode bold letters; tests read them as plain text.
+const { unfancy } = await import('../src/format.js');
+const plain = (p) => JSON.parse(unfancy(JSON.stringify(p)));
 const { setSink } = await import('../src/whatsapp.js');
 const tg = await import('../src/telegram.js');
 const { handleMessage } = await import('../src/bot.js');
@@ -20,8 +23,8 @@ const MOD = 'tg:1';
 const NEW = '919999900000';
 const OTHER = 'tg:42';
 let out = [];
-setSink((to, p) => out.push({ ...p, to }));
-tg.setSink((to, p) => out.push({ ...p, to }));
+setSink((to, p) => out.push(plain({ ...p, to })));
+tg.setSink((to, p) => out.push(plain({ ...p, to })));
 let n = 0;
 const send = (from, extra) => handleMessage({ from, id: `a${++n}`, ...extra });
 const say = (from, body, extra = {}) => send(from, { type: 'text', text: { body }, ...extra });

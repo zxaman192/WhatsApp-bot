@@ -11,6 +11,9 @@ config.gemini.apiKey = '';
 config.allowedNumbers = [];
 
 const store = await import('../src/db.js');
+// Titles are set in Unicode bold letters; tests read them as plain text.
+const { unfancy } = await import('../src/format.js');
+const plain = (p) => JSON.parse(unfancy(JSON.stringify(p)));
 const { setSink } = await import('../src/whatsapp.js');
 const tg = await import('../src/telegram.js');
 const { handleMessage, excerptAround, resumeJobs } = await import('../src/bot.js');
@@ -19,8 +22,8 @@ const { resetResting } = await import('../src/ingest/gemini.js');
 
 const ME = '913333333333';
 let out = [];
-setSink((to, p) => out.push({ ...p, to }));
-tg.setSink((to, p) => out.push({ ...p, to }));
+setSink((to, p) => out.push(plain({ ...p, to })));
+tg.setSink((to, p) => out.push(plain({ ...p, to })));
 let n = 0;
 const sendAs = (from, extra) => handleMessage({ from, id: `a${++n}`, ...extra }, { download: async () => ({ buffer: Buffer.from(''), mimeType: 'text/plain' }) });
 const say = (body, from = ME) => sendAs(from, { type: 'text', text: { body } });
@@ -53,8 +56,8 @@ beforeEach(() => {
 
 test('first contact gets a short onboarding, then help', async () => {
   await sendAs(ME, { type: 'text', text: { body: 'hi' }, firstName: 'Harsh' });
-  assert.match(texts(), /𝗪𝗲𝗹𝗰𝗼𝗺𝗲, 𝗛𝗮𝗿𝘀𝗵!\n_I'm your NEET PG study partner/);
-  assert.match(lastText(), /𝗡𝗘𝗘𝗧 𝗣𝗚 𝗦𝘁𝘂𝗱𝘆 𝗕𝗼𝘁/);
+  assert.match(texts(), /Welcome, Harsh!\n_✦ I'm your NEET PG study partner/);
+  assert.match(lastText(), /NEET PG Study Bot/);
   assert.equal((await store.getUser(ME)).name, 'Harsh', 'name taken from Telegram');
   await say('help');
   assert.match(texts(), /📥 \*Add material\*/);
@@ -189,7 +192,7 @@ test('menu, settings and database buttons all answer cleanly', async () => {
     await say('stop');
   }
   await say('menu');
-  assert.match(texts(), /𝗡𝗘𝗘𝗧 𝗣𝗚 𝗦𝘁𝘂𝗱𝘆 𝗕𝗼𝘁/);
+  assert.match(texts(), /NEET PG Study Bot/);
 });
 
 test('settings: exam date and name by reply', async () => {

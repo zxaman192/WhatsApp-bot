@@ -11,6 +11,9 @@ config.allowedNumbers = [];
 config.dailyTemplate.name = 'daily_question';
 
 const store = await import('../src/db.js');
+// Titles are set in Unicode bold letters; tests read them as plain text.
+const { unfancy } = await import('../src/format.js');
+const plain = (p) => JSON.parse(unfancy(JSON.stringify(p)));
 const { setSink } = await import('../src/whatsapp.js');
 const tg = await import('../src/telegram.js');
 const { handleMessage, parseTestArgs } = await import('../src/bot.js');
@@ -20,8 +23,8 @@ const { findSubjectIn, matchSubject } = await import('../src/subjects.js');
 
 const ME = '919876543210';
 let out = [];
-setSink((to, p) => out.push(p));
-tg.setSink((to, p) => out.push({ ...p, to }));
+setSink((to, p) => out.push(plain(p)));
+tg.setSink((to, p) => out.push(plain({ ...p, to })));
 let n = 0;
 const send = (extra) => handleMessage({ from: ME, id: `t${++n}`, ...extra }, { download: async (id) => files[id] });
 const say = (body) => send({ type: 'text', text: { body } });
@@ -154,7 +157,7 @@ test('explain without Claude returns matching note snippets', async () => {
 
 test('bank and stats', async () => {
   await say('bank');
-  assert.match(lastText(), /Your question bank\*\n_3 questions/);
+  assert.match(lastText(), /Your question bank\n_3 questions/);
   await say('stats');
   assert.match(lastText(), /Your progress/);
 });

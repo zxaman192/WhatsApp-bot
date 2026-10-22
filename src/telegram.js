@@ -96,7 +96,7 @@ export const sendText = (to, body) => send(to, body);
 // The always-visible keyboard under the chat box. Its buttons just send their text ("📝 Question").
 const REPLY_KEYBOARD = {
   keyboard: [
-    [{ text: '🏠 Menu' }, { text: '📝 Question' }, { text: '🧪 Test' }],
+    [{ text: '🏠 Menu' }, { text: '📝 Question' }, { text: '🎯 Practice' }],
     [{ text: '🔁 Revise' }, { text: '📊 Stats' }, { text: '🗂 Database' }],
   ],
   resize_keyboard: true,

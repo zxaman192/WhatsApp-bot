@@ -12,6 +12,9 @@ config.telegram.allowedIds = ['5'];
 config.linkedAccounts = [['915550000000', 'tg:5']];
 
 const store = await import('../src/db.js');
+// Titles are set in Unicode bold letters; tests read them as plain text.
+const { unfancy } = await import('../src/format.js');
+const plain = (p) => JSON.parse(unfancy(JSON.stringify(p)));
 const { setSink } = await import('../src/whatsapp.js');
 const tg = await import('../src/telegram.js');
 const { handleMessage } = await import('../src/bot.js');
@@ -19,8 +22,8 @@ const { handleMessage } = await import('../src/bot.js');
 const WA = '915550000000';
 const TG = 'tg:5';
 let out = [];
-setSink((to, p) => out.push({ ...p, to }));
-tg.setSink((to, p) => out.push({ ...p, to }));
+setSink((to, p) => out.push(plain({ ...p, to })));
+tg.setSink((to, p) => out.push(plain({ ...p, to })));
 let n = 0;
 const say = (from, body) => handleMessage({ from, id: `l${++n}`, type: 'text', text: { body } });
 

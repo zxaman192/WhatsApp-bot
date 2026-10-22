@@ -507,7 +507,7 @@ async function showBank(phone) {
     lines.push('', `📘 *${s}*  ·  ${count} Q${pyq ? `, ${pyq} PYQ` : ''}${n ? `  ·  📖 ${plural(n.topics, 'note topic')}` : ''}`);
     if (topics) lines.push(`_${topics.slice(0, 6).map((t) => `${t.topic} ${t.n}`).join(' · ')}${topics.length > 6 ? ` · +${topics.length - 6} more` : ''}_`);
   }
-  await sendWithButtons(phone, lines.join('\n'), [{ id: 'm:test', title: '🧪 Start a test' }, { id: 'db:files:0', title: '📄 My uploads' }, BACK]);
+  await sendWithButtons(phone, lines.join('\n'), [{ id: 'm:test', title: '🎯 Practice' }, { id: 'db:files:0', title: '📄 My uploads' }, BACK]);
 }
 
 async function showStats(phone) {
@@ -584,6 +584,118 @@ async function testPicker(phone) {
     [{ id: 'tsub:*', title: 'All subjects', description: `${total} questions` }, ...top.map(([s, n]) => ({ id: `tsub:${s}`, title: s, description: `${n} questions` }))],
     'Subjects'
   );
+}
+
+// ---------- practice modes ----------
+
+/** One screen with every way to practise. */
+async function practiceModes(phone) {
+  const t = await store.dbTotals();
+  const lines = [
+    `🎯 ${fancy('Practice Modes')}`,
+    `_${t.questions} questions ready. Pick how you want to practise._`,
+    '',
+    '📅 *Question of the day*: one fresh question',
+    '⚡ *Rapid 5 / Rapid 10*: a quick burst',
+    '🏥 *By department*: ENT, Pharmacology, Surgery…',
+    '🏷 *PYQs only*: past papers, by year',
+    '🔁 *My mistakes*: questions you got wrong',
+    '🎲 *Mixed 25*: all subjects',
+    '🏆 *Grand mock*: timed, +4/−1 marking',
+  ];
+  return wa.sendMenu(phone, lines.join('\n'), PRACTICE_MODES, 2, 'Choose mode');
+}
+
+const PRACTICE_MODES = [
+  { id: 'pm:daily', title: '📅 Question of day', description: 'One fresh question' },
+  { id: 'pm:r5', title: '⚡ Rapid 5', description: '5 quick questions' },
+  { id: 'pm:r10', title: '⚡ Rapid 10', description: '10 quick questions' },
+  { id: 'pm:dept', title: '🏥 By department', description: 'One subject\'s bank' },
+  { id: 'pm:pyq', title: '🏷 PYQs only', description: 'Past papers, by year' },
+  { id: 'pm:wrong', title: '🔁 My mistakes', description: 'What you got wrong' },
+  { id: 'pm:mix', title: '🎲 Mixed 25', description: 'All subjects' },
+  { id: 'pm:grand', title: '🏆 Grand mock', description: 'Timed, +4/−1' },
+  { id: 'pm:coach', title: '🎯 Weak topics', description: 'Drill your weakest' },
+  { id: 'm:menu', title: '🏠 Menu', description: 'Back to the main menu' },
+];
+
+/** Every department with its question count; WhatsApp lists hold 10 rows, so it pages. */
+async function departments(phone, page = 0) {
+  const counts = {};
+  for (const r of await store.bankSummary()) {
+    const c = (counts[r.subject] ??= { n: 0, pyq: 0 });
+    c.n += r.n;
+    c.pyq += r.pyq;
+  }
+  const all = Object.entries(counts).sort((a, b) => a[0].localeCompare(b[0]));
+  if (!all.length) return wa.sendText(phone, EMPTY_BANK);
+  const per = wa.isTelegram(phone) ? 40 : 8;
+  const shown = all.slice(page * per, page * per + per);
+  const rows = shown.map(([s, c]) => ({ id: `dep:${s}`, title: s, description: `${c.n} questions${c.pyq ? ` · ${c.pyq} PYQ` : ''}` }));
+  if (all.length > (page + 1) * per) rows.push({ id: `pm:dept:${page + 1}`, title: '➡️ More departments', description: `${all.length - (page + 1) * per} more` });
+  rows.push({ id: 'pm:modes', title: '🎯 Practice modes', description: 'Back' });
+  const body = `🏥 ${fancy('Departments')}\n_Pick a department to open its question bank._`;
+  if (wa.isTelegram(phone)) return wa.sendMenu(phone, body, rows.map((r) => ({ ...r, title: r.id.startsWith('dep:') ? `${r.title} · ${counts[r.title].n}` : r.title })), 2);
+  return wa.sendList(phone, body, 'Departments', rows, 'Departments');
+}
+
+/** One department's bank: quick and longer tests, PYQs, flashcards, high-yield. */
+async function department(phone, subject) {
+  const n = await store.countQuestions({ subject });
+  if (!n) return wa.sendButtons(phone, `No ${subject} questions yet.`, [{ id: 'pm:dept', title: '🏥 Departments' }, BACK]);
+  const pyq = await store.countQuestions({ subject, pyqOnly: true });
+  const topics = (await store.bankSummary()).filter((r) => r.subject === subject);
+  const lines = [
+    `🩺 ${fancy(subject)}`,
+    `_${n} ${n === 1 ? 'question' : 'questions'}${pyq ? ` · ${pyq} PYQ` : ''} · ${topics.length} ${topics.length === 1 ? 'topic' : 'topics'}_`,
+    '',
+    '📚 *Top topics*',
+    ...topics.slice(0, 6).map((r) => `• ${r.topic} _(${r.n})_`),
+  ];
+  return wa.sendMenu(phone, lines.join('\n'), [
+    { id: `dq:${subject}:5`, title: '⚡ Rapid 5' },
+    { id: `dq:${subject}:10`, title: '📝 10 questions' },
+    { id: `dq:${subject}:25`, title: '📝 25 questions' },
+    ...(pyq ? [{ id: `dpyq:${subject}`, title: '🏷 PYQs only' }] : []),
+    { id: `pflash:${subject}`, title: '🃏 Flashcards' },
+    { id: `phy:${subject}`, title: '⭐ High-yield' },
+    { id: 'pm:dept', title: '🏥 Departments' },
+    BACK,
+  ], 2, 'Choose');
+}
+
+/** PYQ years with counts. */
+async function pyqYears(phone) {
+  const years = await store.pyqYears();
+  const total = years.reduce((a, y) => a + y.n, 0);
+  if (!total) return wa.sendButtons(phone, 'No PYQs in the bank yet. Upload a past paper and I\'ll tag it by year.', [{ id: 'pm:modes', title: '🎯 Practice modes' }, BACK]);
+  return wa.sendMenu(
+    phone,
+    `🏷 ${fancy('Previous Year Questions')}\n_${total} PYQs. Pick a year, or practise them all._`,
+    [{ id: 'pyq:all', title: '🎲 All years · 10' }, ...years.slice(0, 8).map((y) => ({ id: `pyq:${y.year}`, title: `📅 ${y.year}`, description: `${y.n} questions` })), { id: 'pm:modes', title: '🎯 Practice modes' }],
+    2,
+    'Pick year'
+  );
+}
+
+/** A tap inside the practice screens. Returns undefined when the id isn't one of them. */
+async function practiceTap(phone, user, kind, a, b) {
+  if (kind === 'pm') {
+    if (a === 'modes') return practiceModes(phone);
+    if (a === 'daily') return dailyQuestion(phone, user);
+    if (a === 'r5' || a === 'r10') return startTest(phone, user, { count: a === 'r5' ? 5 : 10, label: `Rapid ${a.slice(1)}` });
+    if (a === 'dept') return departments(phone, Number(b) || 0);
+    if (a === 'pyq') return pyqYears(phone);
+    if (a === 'wrong') return startTest(phone, user, { wrongOnly: true, count: 20 });
+    if (a === 'mix') return startTest(phone, user, { count: 25, label: 'Mixed 25' });
+    if (a === 'grand') return grandChooser(phone, user);
+    if (a === 'coach') return coach(phone, user);
+  }
+  if (kind === 'dep') return department(phone, a);
+  if (kind === 'dq') return startTest(phone, user, { subject: a, count: Number(b) || 10, label: Number(b) === 5 ? `${a} · Rapid 5` : a });
+  if (kind === 'dpyq') return startTest(phone, user, { subject: a, pyqOnly: true, count: 10 });
+  if (kind === 'pyq') return startTest(phone, user, a === 'all' ? { pyqOnly: true, count: 10 } : { year: a, count: 25 });
+  return undefined;
 }
 
 /** Parse "test pharma 20 pyq 2022 thyroid" into options. */
@@ -869,7 +981,7 @@ async function showHighYield(phone, arg) {
     lines.push(`*${i + 1}. ${r.topic}*${subject ? '' : ` _(${r.subject})_`}`, `    ${asked}  ·  ${mine}`);
   });
   lines.push('', '_Send *test <topic>* to practise one._');
-  return sendWithButtons(phone, lines.join('\n'), [{ id: 'm:test', title: '🧪 Start a test' }, BACK]);
+  return sendWithButtons(phone, lines.join('\n'), [{ id: 'm:test', title: '🎯 Practice' }, BACK]);
 }
 
 // ---------- exam countdown and plan ----------
@@ -1180,7 +1292,7 @@ const looksLikeMaterial = (text) => text.length > 500 || (/\n\s*\(?[aA]\s*[).]/.
 // Most-used first: WhatsApp lists show only the first 10.
 const MAIN_MENU = [
   { id: 'm:q', title: '📝 Question', description: 'One question now' },
-  { id: 'm:test', title: '🧪 Test', description: 'Pick a subject and length' },
+  { id: 'm:test', title: '🎯 Practice', description: 'Rapid, daily, departments, PYQs' },
   { id: 'm:revise', title: '🔁 Revise', description: 'Questions due for review' },
   { id: 'm:grand', title: '🏆 Grand mock', description: 'Timed, +4/−1' },
   { id: 'm:today', title: '📆 Today & plan', description: 'Your plan to exam day' },
@@ -1205,7 +1317,7 @@ async function showMenu(phone, user) {
     `${st ? `🔥 *${plural(st, 'day')}* streak` : '🌱 Answer a question to start a streak'}${rc.due ? `  ·  🔁 *${rc.due}* due today` : ''}`,
   ];
   if (user.exam_date && user.exam_date > localNow().date) lines.push(`📆 *D-${daysBetween(localNow().date, user.exam_date)}* to your exam`);
-  lines.push('', '_Pick an option below, ask me anything, or send a PDF._');
+  lines.push('', access.isModerator(phone) ? '_Pick an option below, ask me anything, or send a PDF._' : '_Pick an option below, or ask me anything._');
   if (wa.isTelegram(phone) && !user.state.kb) {
     // Install the quick-access keyboard once.
     await store.updateUser(phone, { state: { ...user.state, kb: true } });
@@ -1356,18 +1468,26 @@ function withLock(key, fn) {
 }
 
 const ONBOARDING = (name) => `👋 ${fancy(`Welcome${name ? `, ${name}` : ''}!`)}
-_I'm your NEET PG study partner. Here's how it works._
+_✦ I'm your NEET PG study partner. Here's how it works. ✦_
+
+━━━━━━━━━━━━━━
 
 📥 *1. Add your material*
-Send a PDF, a photo of a page, or pasted text. I sort notes, Q-banks and PYQs by subject and topic.
+➜ Send a PDF, a photo of a page, or pasted text
+➜ I sort notes, Q-banks and PYQs by subject and topic
 
-📝 *2. Practise*
-*q* for one question, *test* for a test, *grand* for a timed mock.
+🎯 *2. Practise*
+➜ *q* ➜ one question
+➜ *practice* ➜ rapid 5, departments, PYQs
+➜ *grand* ➜ a timed mock
 
 🧠 *3. Ask anything*
-Type a question like _"DOC for absence seizures?"_ and I answer from your notes.
+➜ Type a question like _"DOC for absence seizures?"_
+➜ I answer from your notes and cite them
 
-_Every morning I send a question of the day. Tap 🏠 Menu any time to find everything._`;
+━━━━━━━━━━━━━━
+
+_⏰ A question of the day arrives every morning. Tap 🏠 Menu any time to find everything._`;
 
 async function handle(msg, { download = (id) => wa.downloadMedia(msg.from, id) } = {}) {
   const phone = msg.from;
@@ -1451,13 +1571,14 @@ async function handle(msg, { download = (id) => wa.downloadMedia(msg.from, id) }
         if (!d) return await coach(phone, user);
         return await startTest(phone, user, { subject: d.subject, topic: d.topic, count: 10 });
       }
+      if (/^(pm|dep|dq|dpyq|pyq)$/.test(kind)) return await practiceTap(phone, user, kind, a, b);
       if (kind === 'ptest') return await startTest(phone, user, { subject: a, count: 10 });
       if (kind === 'pflash') return await startFlash(phone, user, { subject: a });
       if (kind === 'phy') return await showHighYield(phone, a);
       if (kind === 'm') {
         if (a === 'menu') return await showMenu(phone, user);
         if (a === 'q') return await askSingle(phone, user);
-        if (a === 'test') return (await testRunning(phone, user)) || (await testPicker(phone));
+        if (a === 'test') return (await testRunning(phone, user)) || (await practiceModes(phone));
         if (a === 'revise') return await startTest(phone, user, { wrongOnly: true, count: 20 });
         if (a === 'grand') return await grandChooser(phone, user);
         if (a === 'today') return user.exam_date ? await showToday(phone, user) : await askExamDate(phone, user);
@@ -1509,7 +1630,7 @@ async function handle(msg, { download = (id) => wa.downloadMedia(msg.from, id) }
       if (kind === 'next') return await askSingle(phone, user);
       if (kind === 'why') return await why(phone, user, Number(a) || undefined);
       if (kind === 'sim') return await similar(phone, { ...user, state: { ...user.state, lastQid: Number(a) || user.state.lastQid } });
-      if (kind === 'newtest') return (await testRunning(phone, user)) || (await testPicker(phone));
+      if (kind === 'newtest') return (await testRunning(phone, user)) || (await practiceModes(phone));
       if (kind === 'stats') return await showStats(phone);
       if (kind === 'help') return await wa.sendText(phone, HELP);
       if (kind === 'bank') return await showBank(phone);
@@ -1604,8 +1725,18 @@ async function handle(msg, { download = (id) => wa.downloadMedia(msg.from, id) }
         return await dbDeletePrompt(phone, user);
       case 'q': case 'question': case 'quiz': case 'next':
         return await askSingle(phone, user, { subject: matchSubject(restWords[0]) });
+      case 'practice': case 'modes': case 'mode': case 'practise':
+        return await practiceModes(phone);
+      case 'rapid': case 'quick':
+        return await startTest(phone, user, { count: Number(restWords[0]) || 5, label: `Rapid ${Number(restWords[0]) || 5}` });
+      case 'pyq': case 'pyqs':
+        if (rest) return await startTest(phone, user, parseTestArgs(`pyq ${rest}`));
+        return await pyqYears(phone);
+      case 'department': case 'departments': case 'dept': case 'subject': case 'subjects-bank':
+        if (rest && matchSubject(restWords[0])) return await department(phone, matchSubject(restWords[0]));
+        return await departments(phone);
       case 'test':
-        if (!rest) return await testPicker(phone);
+        if (!rest) return await practiceModes(phone);
         return await startTest(phone, user, parseTestArgs(rest));
       case 'exam': {
         const date = rest && parseDate(rest.replace(/^(on|date|is)\s+/i, ''));
