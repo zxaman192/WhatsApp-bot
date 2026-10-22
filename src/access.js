@@ -8,7 +8,8 @@ import { localNow } from './time.js';
 import { fancy } from './format.js';
 
 export const isModerator = (phone) => isAllowed(phone);
-export const canUse = (phone, user) => isModerator(phone) || user?.access === 'approved';
+// Access requests are a Telegram feature; on WhatsApp only the owner's own number (ALLOWED_NUMBERS) is answered.
+export const canUse = (phone, user) => isModerator(phone) || (wa.isTelegram(phone) && user?.access === 'approved');
 
 const MENU = { id: 'm:menu', title: '🏠 Menu' };
 const USERS = { id: 'usr:list', title: '👥 Users' };

@@ -20,7 +20,8 @@ const { handleMessage } = await import('../src/bot.js');
 const { runDueDailies } = await import('../src/scheduler.js');
 
 const MOD = 'tg:1';
-const NEW = '919999900000';
+const NEW = 'tg:9999';
+const WA_STRANGER = '919999900000';
 const OTHER = 'tg:42';
 let out = [];
 setSink((to, p) => out.push(plain({ ...p, to })));
@@ -38,6 +39,14 @@ before(async () => {
   await store.addQuestion({ subject: 'Pharmacology', topic: 'Antiepileptics', stem: 'Drug of choice for absence seizures', options: ['Ethosuximide', 'Phenytoin', 'Carbamazepine', 'Phenobarbitone'], answer: 0, explanation: '', year: '', exam: '', answerChecked: true, origin: 'bank', page: null });
 });
 after(() => store.closeDb());
+
+test('WhatsApp strangers are ignored: access requests are Telegram only', async () => {
+  out = [];
+  await say(WA_STRANGER, 'hi');
+  await tap(WA_STRANGER, 'acc:req');
+  assert.equal(out.length, 0);
+  assert.ok(!(await store.findUser(WA_STRANGER)), "no record is created");
+});
 
 test('a stranger gets the welcome and can request access; the moderator is asked on Telegram', async () => {
   out = [];

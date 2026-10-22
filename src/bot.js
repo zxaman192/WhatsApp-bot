@@ -1492,9 +1492,11 @@ _⏰ A question of the day arrives every morning. Tap 🏠 Menu any time to find
 async function handle(msg, { download = (id) => wa.downloadMedia(msg.from, id) } = {}) {
   const phone = msg.from;
   if (msg.callbackId) answerCallback(msg.callbackId);
+  // WhatsApp stays private: anyone but the owner's number is ignored without a reply or a record.
+  if (!wa.isTelegram(phone) && !access.isModerator(phone)) return;
   try {
     const user = await store.getUser(phone);
-    // Anyone can message the bot; people without access get the welcome and can ask for it.
+    // Anyone can message the Telegram bot; people without access get the welcome and can ask for it.
     if (!access.canUse(phone, user)) return await access.gate(phone, user, msg);
     const mod = access.isModerator(phone);
     const firstContact = !user.last_inbound_at;
