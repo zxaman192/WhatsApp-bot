@@ -264,7 +264,6 @@ async function handleInbound(s, m) {
   const msg = toBotMessage(m, phone);
   if (!msg) return;
   log(`${msg.type} from …${phone.slice(-4)}`);
-  s.readMessages([m.key]).catch(() => {});
   const download = async () => {
     const buffer = await downloadMediaMessage(m, 'buffer', {}, { reuploadRequest: s.updateMediaMessage });
     const c = unwrap(m.message);
