@@ -1,0 +1,28 @@
+{
+  "name": "neet-pg-whatsapp-bot",
+  "version": "0.1.0",
+  "description": "WhatsApp bot for NEET PG prep: upload notes, question banks and PYQs, get a daily question and custom tests.",
+  "type": "module",
+  "main": "src/server.js",
+  "engines": {
+    "node": ">=22.13"
+  },
+  "scripts": {
+    "start": "node src/server.js",
+    "chat": "node scripts/chat.js",
+    "screens": "node scripts/screens.js",
+    "import": "node scripts/import.js",
+    "test": "node --test test/*.test.js"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.135.0",
+    "@electric-sql/pglite": "^0.5.10",
+    "@whiskeysockets/baileys": "7.0.0-rc14",
+    "dotenv": "^16.4.5",
+    "express": "^5.1.0",
+    "pdf-lib": "^1.17.1",
+    "pg": "^8.23.1",
+    "pino": "9.14.0",
+    "unpdf": "1.8.1"
+  }
+}
